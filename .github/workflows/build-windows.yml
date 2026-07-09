@@ -8,49 +8,39 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
 
-      - name: Install Root Dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Install Backend Dependencies
-        run: |
+      - run: |
           cd backend
           npm install
 
-      - name: Install Frontend Dependencies
-        run: |
+      - run: |
           cd frontend
           npm install
 
-      - name: Build Frontend
-        run: |
+      - run: |
           cd frontend
           npm run build
 
-      - name: Copy Frontend to Backend
-        run: npm run copy-frontend
-      
-            - name: Show package.json
-        run: type package.json
+      - run: npm run copy-frontend
+
+      - name: Print package.json
+        shell: pwsh
+        run: Get-Content package.json
 
       - name: Show electron-builder version
         run: npx electron-builder --version
 
-      - name: Validate config
-        run: npx electron-builder --config
-
-      - name: Build Windows Installer
+      - name: Build Windows
         run: npx electron-builder --win --x64 --publish=never
 
-      - name: Upload EXE
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: SOPF-Windows
           path: release/**
