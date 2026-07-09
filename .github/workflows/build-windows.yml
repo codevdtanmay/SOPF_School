@@ -36,6 +36,15 @@ jobs:
 
       - name: Copy Frontend to Backend
         run: npm run copy-frontend
+      
+            - name: Show package.json
+        run: type package.json
+
+      - name: Show electron-builder version
+        run: npx electron-builder --version
+
+      - name: Validate config
+        run: npx electron-builder --config
 
       - name: Build Windows Installer
         run: npx electron-builder --win --x64 --publish=never
