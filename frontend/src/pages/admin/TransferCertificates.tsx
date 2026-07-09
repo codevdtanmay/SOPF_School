@@ -76,8 +76,8 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
   const conductList = ['Excellent', 'Very Good', 'Good', 'Average'];
   
   const classesList = [
-    'Nursery', 'LKG', 'UKG', 'Class 1', 'Class 2', 'Class 3', 'Class 4', 'Class 5', 
-    'Class 6', 'Class 7', 'Class 8', 'Class 9', 'Class 10', 'Class 11', 'Class 12'
+    'Nursery', 'LKG', 'UKG', 'Class 1st', 'Class 2nd', 'Class 3rd', 'Class 4th', 'Class 5th', 
+    'Class 6th', 'Class 7th', 'Class 8th', 'Class 9th', 'Class 10th','Class 11th'
   ];
 
   // Load all Transfer Certificates
@@ -150,7 +150,7 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
       setFormReason('Transfer');
       setFormLastAttendance(new Date().toISOString().split('T')[0]);
       setFormConduct('Excellent');
-      setFormPromotedTo('Class 11');
+      setFormPromotedTo('Class 11th');
       setFormRemarks('');
       setFormIssuedBy('Principal');
 

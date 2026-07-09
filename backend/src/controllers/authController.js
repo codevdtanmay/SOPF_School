@@ -21,7 +21,9 @@ const register = async(req,res) => {
     const user = await userModel.create({
         name, email, password : hashedPassword, role
     })
-    
+    console.log("Created user:", user);
+
+console.log("DB Name:", userModel.db.name)
    const token = jwt.sign({
      id: user._id,
    }, process.env.JWT_SECRET);

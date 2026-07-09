@@ -763,15 +763,7 @@ console.log(studentIdForTransport);
 
       // Synchronize with local storage fee history
       const selectedStudent = allStudents.find(s => s.id === feeForm.studentId);
-      feeApi.addLocalPayment({
-        studentId: feeForm.studentId,
-        name: selectedStudent?.name || 'Student',
-        admissionNo: selectedStudent?.admissionNo || 'ADM-UNK',
-        className: selectedStudent?.class || 'General',
-        amount: parseFloat(feeForm.amountPaid),
-        paymentMethod: feeForm.paymentMethod
-      });
-
+     
       setIsFeeModalOpen(false);
       setFeeForm({ studentId: '', amountPaid: '', paymentMethod: 'Cash' });
       triggerDataRefresh();
@@ -2268,14 +2260,7 @@ console.log(studentIdForTransport);
             });
 
             // Synchronize with local storage fee history
-            feeApi.addLocalPayment({
-              studentId: activeRecord.id,
-              name: activeRecord.name,
-              admissionNo: activeRecord.admissionNo,
-              className: activeRecord.className,
-              amount: amountFloat,
-              paymentMethod: customPayMode
-            });
+         
 
             // Trigger fetch refresh to fetch everything fresh from database
             triggerDataRefresh();
@@ -3873,16 +3858,16 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                     <option value="Nursery">Nursery</option>
                     <option value="LKG">LKG</option>
                     <option value="UKG">UKG</option>
-                    <option value="1st">1st</option>
-                    <option value="2nd">2nd</option>
-                    <option value="3rd">3rd</option>
-                    <option value="4th">4th</option>
-                    <option value="5th">5th</option>
-                    <option value="6th">6th</option>
-                    <option value="7th">7th</option>
-                    <option value="8th">8th</option>
-                    <option value="9th">9th</option>
-                    <option value="10th">10th</option>
+                    <option value="Class 1st">Class 1st</option>
+                    <option value="Class 2nd">Class 2nd</option>
+                    <option value="Class 3rd">Class 3rd</option>
+                    <option value="Class 4th">Class 4th</option>
+                    <option value="Class 5th">Class 5th</option>
+                    <option value="Class 6th">Class 6th</option>
+                    <option value="Class 7th">Class 7th</option>
+                    <option value="Class 8th">Class 8th</option>
+                    <option value="Class 9th">Class 9th</option>
+                    <option value="Class 10th">Class 10th</option>
                   </select>
                 </div>
               </div>
@@ -4377,16 +4362,16 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                     onChange={(e) => setFeeStructureForm({ ...feeStructureForm, class: e.target.value })}
                     required
                   >
-                    <option value="Class 1">Class 1</option>
-                    <option value="Class 2">Class 2</option>
-                    <option value="Class 3">Class 3</option>
-                    <option value="Class 4">Class 4</option>
-                    <option value="Class 5">Class 5</option>
-                    <option value="Class 6">Class 6</option>
-                    <option value="Class 7">Class 7</option>
-                    <option value="Class 8">Class 8</option>
-                    <option value="Class 9">Class 9</option>
-                    <option value="Class 10">Class 10</option>
+                    <option value="Class 1st">Class 1st</option>
+                    <option value="Class 2nd">Class 2nd</option>
+                    <option value="Class 3rd">Class 3rd</option>
+                    <option value="Class 4th">Class 4th</option>
+                    <option value="Class 5th">Class 5th</option>
+                    <option value="Class 6th">Class 6th</option>
+                    <option value="Class 7th">Class 7th</option>
+                    <option value="Class 8th">Class 8th</option>
+                    <option value="Class 9th">Class 9th</option>
+                    <option value="Class 10th">Class 10th</option>
                     <option value="Nursery">Nursery</option>
                     <option value="LKG">LKG</option>
                     <option value="UKG">UKG</option>

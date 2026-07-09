@@ -12,6 +12,12 @@ release/
 # Environment
 .env
 **/.env
-
+node_modules/
+release/
+backend/dist/
+frontend/dist/
+.env
+backend/.env
+.DS_Store
 # macOS
 .DS_Store

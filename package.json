@@ -37,7 +37,7 @@
   },
   "build": {
     "appId": "com.sopf",
-    "productName": "School Management",
+    "productName": "SOPF",
     "asar": true,
     "asarUnpack": [
       "backend/**/*"
@@ -52,9 +52,11 @@
       "output": "release"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "arch": ["x64"]
     },
     "mac": {
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"
