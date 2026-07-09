@@ -1,0 +1,6 @@
+{
+  "name": "School ERP",
+  "description": "A premium School ERP frontend featuring a login portal and administrator dashboard for The School of Pansy Flowers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

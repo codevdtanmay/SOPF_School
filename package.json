@@ -1,0 +1,71 @@
+{
+  "name": "school-mgmt-edu",
+  "version": "1.0.0",
+  "description": "",
+  "main": "desktop/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "desktop": "electron .",
+    "build-frontend": "cd frontend && npm run build",
+    "copy-frontend": "node scripts/copyFrontend.js",
+    "package": "npm run build-frontend && npm run copy-frontend && electron-builder --publish=never"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codevdtanmay/school-mgmt-edu.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/codevdtanmay/school-mgmt-edu/issues"
+  },
+  "homepage": "https://github.com/codevdtanmay/school-mgmt-edu#readme",
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.7.4",
+    "tree-kill": "^1.2.2"
+  },
+  "build": {
+    "appId": "com.sopf",
+    "productName": "School Management",
+    "asar": true,
+    "asarUnpack": [
+      "backend/**/*"
+    ],
+    "files": [
+      "desktop/**/*",
+      "backend/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.education"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}
