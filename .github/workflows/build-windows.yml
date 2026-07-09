@@ -33,6 +33,15 @@ jobs:
       - name: Print package.json
         shell: pwsh
         run: Get-Content package.json
+      - name: Create backend .env
+        shell: pwsh
+        run: |
+          "MONGO_URI=${{ secrets.MONGO_URI }}" | Out-File backend/.env
+          "JWT_SECRET=${{ secrets.JWT_SECRET }}" | Add-Content backend/.env
+
+      - name: Verify .env exists
+        shell: pwsh
+        run: Get-Content backend/.env
 
       - name: Show electron-builder version
         run: npx electron-builder --version
