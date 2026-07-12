@@ -1,12 +1,15 @@
 
 import feeStructureModel from '../models/feeStructure.js'
+import { normalizeAcademicYear } from "../utils/feeLifecycle.js";
 
 const createFeeStructure = async (req, res) => {
   try {
 
     const {
       class: studentClass,
+      academicYear,
       academicSession,
+      monthlyFee,
       admissionFee,
       tuitionFee,
       computerFee,
@@ -21,7 +24,7 @@ const createFeeStructure = async (req, res) => {
     const existingStructure =
       await feeStructureModel.findOne({
         class: studentClass,
-        academicSession
+        academicYear: normalizeAcademicYear(academicYear || academicSession)
       });
 
     if (existingStructure) {
@@ -34,7 +37,9 @@ const createFeeStructure = async (req, res) => {
     const feeStructure =
       await feeStructureModel.create({
         class: studentClass,
-        academicSession,
+        academicYear: normalizeAcademicYear(academicYear || academicSession),
+        academicSession: normalizeAcademicYear(academicSession || academicYear),
+        monthlyFee,
         admissionFee,
         tuitionFee,
         computerFee,
@@ -123,9 +128,13 @@ const updateFeeStructure = async (req, res) => {
     const feeStructure =
       await feeStructureModel.findByIdAndUpdate(
         id,
-        req.body,
         {
-          new: true,
+          ...req.body,
+          academicYear: normalizeAcademicYear(req.body.academicYear || req.body.academicSession),
+          academicSession: normalizeAcademicYear(req.body.academicSession || req.body.academicYear)
+        },
+        {
+          returnDocument: "after",
           runValidators: true
         }
       );

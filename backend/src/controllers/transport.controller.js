@@ -1,5 +1,15 @@
 import transportModel from "../models/transport.model.js";
 import studentModel from "../models/student.model.js";
+import transportPaymentModel from "../models/transportPayment.model.js";
+
+const parseMonthlyCharge = (value) => {
+  const numericValue = Number(value);
+
+  return Number.isFinite(numericValue) && numericValue > 0
+    ? numericValue
+    : null;
+};
+
 
 const addTransport = async (req, res) => {
   try {
@@ -10,6 +20,15 @@ const addTransport = async (req, res) => {
       monthlyCharge,
       joiningDate
     } = req.body;
+
+    const numericMonthlyCharge = parseMonthlyCharge(monthlyCharge);
+
+    if (numericMonthlyCharge == null) {
+      return res.status(400).json({
+        success: false,
+        message: "Monthly charge is required and must be greater than 0"
+      });
+    }
 
     const student = await studentModel.findById(studentId);
 
@@ -33,14 +52,36 @@ const addTransport = async (req, res) => {
       studentId,
       routeName,
       pickupPoint,
-      monthlyCharge,
+      monthlyCharge: numericMonthlyCharge,
       joiningDate
+    });
+
+    const populatedTransport = await transportModel.findById(
+      transport._id
+    ).populate({
+      path: "studentId",
+      populate: {
+        path: "userId",
+        select: "name email"
+      }
     });
 
     return res.status(201).json({
       success: true,
       message: "Transport assigned successfully",
-      transport
+      transport: {
+        id: populatedTransport._id,
+        studentId: populatedTransport.studentId?._id,
+        name: populatedTransport.studentId?.userId?.name,
+        email: populatedTransport.studentId?.userId?.email,
+        admissionNo: populatedTransport.studentId?.admissionNo,
+        className: `${populatedTransport.studentId?.class}-${populatedTransport.studentId?.section}`,
+        routeName: populatedTransport.routeName,
+        pickupPoint: populatedTransport.pickupPoint,
+        monthlyCharge: populatedTransport.monthlyCharge,
+        joiningDate: populatedTransport.joiningDate,
+        status: populatedTransport.status
+      }
     });
 
   } catch (error) {
@@ -56,6 +97,9 @@ const addTransport = async (req, res) => {
 const getAllTransportStudents = async (req, res) => {
   try {
 
+    const currentMonth = new Date().getMonth() + 1;
+    const currentYear = new Date().getFullYear();
+
     const transports = await transportModel
       .find()
       .populate({
@@ -66,29 +110,63 @@ const getAllTransportStudents = async (req, res) => {
         }
       });
 
-    const formattedTransports = transports.map((transport) => ({
-      id: transport._id,
+    const formattedTransports = await Promise.all(
 
-      studentId: transport.studentId?._id,
+      transports.map(async (transport) => {
 
-      name: transport.studentId?.userId?.name,
+        const payment = await transportPaymentModel.findOne({
+          studentId: transport.studentId._id,
+          month: currentMonth,
+          year: currentYear
+        });
 
-      email: transport.studentId?.userId?.email,
+        return {
 
-      admissionNo: transport.studentId?.admissionNo,
+          id: transport._id,
 
-      className: `${transport.studentId?.class}-${transport.studentId?.section}`,
+          studentId: transport.studentId?._id,
 
-      routeName: transport.routeName,
+          name: transport.studentId?.userId?.name,
 
-      pickupPoint: transport.pickupPoint,
+          email: transport.studentId?.userId?.email,
 
-      monthlyCharge: transport.monthlyCharge,
+          admissionNo: transport.studentId?.admissionNo,
 
-      joiningDate: transport.joiningDate,
+          className: payment?.className
+            ? `${payment.className}${payment.section ? `-${payment.section}` : ""}`
+            : `${transport.studentId?.class}-${transport.studentId?.section}`,
 
-      status: transport.status
-    }));
+          routeName: transport.routeName,
+
+          pickupPoint: transport.pickupPoint,
+
+          monthlyCharge: transport.monthlyCharge,
+
+          joiningDate: transport.joiningDate,
+
+          // Preserve transport assignment status for roster UIs.
+          status: transport.status,
+
+          // Expose current-month payment state separately.
+          paymentStatus: payment ? payment.status : "Pending",
+
+          paidAmount: payment ? payment.paidAmount : 0,
+
+          dueAmount: payment
+            ? payment.dueAmount
+            : transport.monthlyCharge,
+
+          receiptNo: payment?.receiptNo || null,
+
+          academicYear: payment?.academicYear || transport.studentId?.academicYear || "",
+
+          paymentDate: payment?.paymentDate || null
+
+        };
+
+      })
+
+    );
 
     return res.status(200).json({
       success: true,
@@ -149,6 +227,14 @@ const updateTransport = async (req, res) => {
   try {
 
     const { id } = req.params;
+    const numericMonthlyCharge = parseMonthlyCharge(req.body.monthlyCharge);
+
+    if (numericMonthlyCharge == null) {
+      return res.status(400).json({
+        success: false,
+        message: "Monthly charge is required and must be greater than 0"
+      });
+    }
 
     const transport = await transportModel.findById(id);
 
@@ -160,7 +246,14 @@ const updateTransport = async (req, res) => {
     }
 
     const updated = await transportModel
-  .findByIdAndUpdate(id, req.body, { new: true })
+  .findByIdAndUpdate(
+    id,
+    {
+      ...req.body,
+      monthlyCharge: numericMonthlyCharge
+    },
+    { returnDocument: "after" }
+  )
   .populate({
     path: "studentId",
     populate: {

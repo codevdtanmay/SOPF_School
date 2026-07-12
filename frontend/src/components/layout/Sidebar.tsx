@@ -95,7 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }}
                 className={`flex items-center w-full rounded-lg px-3 py-2 text-sm font-medium transition-all duration-200 cursor-pointer
                   ${isActive 
-                    ? 'bg-blue-600/8 text-blue-650 border-l-4 border-blue-600 font-semibold' 
+                    ? 'bg-blue-50 text-blue-600 border-l-4 border-blue-600 font-semibold' 
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                   }
                   ${isCollapsed ? 'justify-center relative group' : 'gap-3'}
@@ -149,7 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Connected User Profile Footer */}
-      <div className={`p-4 border-t border-slate-105 bg-slate-50/60 flex items-center ${isCollapsed ? 'justify-center px-2' : 'gap-3'}`}>
+      <div className={`p-4 border-t border-slate-100/80 bg-slate-50/60 flex items-center ${isCollapsed ? 'justify-center px-2' : 'gap-3'}`}>
         <img
           src={user?.avatar || 'https://api.dicebear.com/7.x/notionists/svg?seed=admin'}
           alt={user?.name || 'User'}
@@ -193,7 +193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Mobile Drawer Backdrop */}
       {isMobileOpen && (
         <div 
-          className="fixed inset-0 bg-slate-900/30 backdrop-blur-xs z-40 md:hidden transition-opacity duration-300"
+          className="fixed inset-0 bg-slate-900/30 backdrop-blur-sm z-40 md:hidden transition-opacity duration-300"
           onClick={() => setIsMobileOpen(false)}
         />
       )}

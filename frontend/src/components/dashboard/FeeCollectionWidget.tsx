@@ -76,7 +76,7 @@ export const FeeCollectionWidget: React.FC<FeeCollectionWidgetProps> = ({ fees, 
             />
           </div>
           <span className="text-[10px] text-slate-400 font-semibold block">
-            Current Target: ₹{monthlyTarget.toLocaleString()} (June Term)
+            Current Target: ₹{monthlyTarget.toLocaleString()} (Current Term)
           </span>
         </div>
       </div>

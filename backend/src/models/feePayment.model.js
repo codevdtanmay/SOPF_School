@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 
-const transportPaymentSchema = new mongoose.Schema(
+const feePaymentSchema = new mongoose.Schema(
   {
     studentId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -46,93 +46,78 @@ const transportPaymentSchema = new mongoose.Schema(
       immutable: true
     },
 
-    routeName: {
-      type: String,
+    feeStructureId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "FeeStructure",
       required: true,
-      trim: true,
+      index: true,
       immutable: true
     },
 
-    pickupPoint: {
+    month: {
       type: String,
       required: true,
       trim: true,
+      index: true,
       immutable: true
     },
 
-    monthlyCharge: {
+    amount: {
       type: Number,
       required: true,
       min: 0,
       immutable: true
     },
 
-    transportId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Transport",
-      required: true
+    paidAmount: {
+      type: Number,
+      required: true,
+      min: 0,
+      immutable: true
+    },
+
+    dueAmount: {
+      type: Number,
+      required: true,
+      min: 0,
+      immutable: true
+    },
+
+    status: {
+      type: String,
+      enum: ["Pending", "Partial", "Paid"],
+      required: true,
+      default: "Pending",
+      immutable: true
+    },
+
+    paymentMethod: {
+      type: String,
+      enum: ["Cash", "UPI", "Card", "Bank Transfer"],
+      required: true,
+      default: "Cash",
+      immutable: true
     },
 
     receiptNo: {
       type: String,
       required: true,
-      unique: true
-    },
-
-    month: {
-      type: Number,
-      required: true,
-      min: 1,
-      max: 12,
+      unique: true,
+      trim: true,
       immutable: true
-    },
-
-    year: {
-      type: Number,
-      required: true,
-      immutable: true
-    },
-
-    amount: {
-  type: Number,
-  required: true,
-  min: 1
-},
-
-paidAmount: {
-  type: Number,
-  default: 0
-},
-dueAmount: {
-  type: Number,
-  required: true
-},
-    status: {
-  type: String,
-  enum: ["Pending", "Partial", "Paid"],
-  default: "Pending"
-},
-
-    paymentMethod: {
-      type: String,
-      enum: [
-        "Cash",
-        "UPI",
-        "Card",
-        "Bank Transfer"
-      ],
-      default: "Cash"
     },
 
     paymentDate: {
       type: Date,
       default: Date.now,
+      index: true,
       immutable: true
     },
 
-    remarks: {
+    migrationSource: {
       type: String,
-      default: ""
+      default: "",
+      immutable: true
     }
   },
   {
@@ -140,18 +125,9 @@ dueAmount: {
   }
 );
 
-transportPaymentSchema.index(
-  {
-    studentId: 1,
-    month: 1,
-    year: 1
-  },
-  {
-    unique: true
-  }
-);
+feePaymentSchema.index({ studentId: 1, academicYear: 1, month: 1 });
+feePaymentSchema.index({ academicYear: 1, month: 1, paymentDate: -1 });
+feePaymentSchema.index({ studentId: 1, academicYear: 1, feeStructureId: 1 });
 
-export default mongoose.model(
-  "TransportPayment",
-  transportPaymentSchema
-);
+export default mongoose.model("FeePayment", feePaymentSchema);
+

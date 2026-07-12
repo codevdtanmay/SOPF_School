@@ -1,6 +1,7 @@
 import express from "express";
 import transportPaymentController from "../controllers/transportPayment.controller.js";
 import authMiddleware from "../middleware/authMiddleware.js";
+import authorize from "../middleware/roleMiddleware.js";
 
 
 const router = express.Router();
@@ -9,7 +10,7 @@ const router = express.Router();
 router.post(
   "/collect",
   authMiddleware,
-  
+  authorize("admin"),
   transportPaymentController.collectTransportFee
 );
 
@@ -17,7 +18,7 @@ router.post(
 router.get(
   "/history",
   authMiddleware,
- 
+  authorize("admin"),
   transportPaymentController.getPaymentHistory
 );
 
@@ -25,7 +26,7 @@ router.get(
 router.get(
   "/dashboard",
   authMiddleware,
-
+  authorize("admin"),
   transportPaymentController.getDashboard
 );
 
@@ -33,7 +34,7 @@ router.get(
 router.get(
   "/monthly-report",
   authMiddleware,
-
+  authorize("admin"),
   transportPaymentController.getMonthlyReport
 );
 
@@ -41,12 +42,13 @@ router.get(
 router.get(
   "/pending",
   authMiddleware,
- 
+  authorize("admin"),
   transportPaymentController.getPendingStudents
 );
 router.get(
   "/route-report",
   authMiddleware,
+  authorize("admin"),
   transportPaymentController.getRouteReport
 );
 

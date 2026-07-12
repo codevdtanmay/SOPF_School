@@ -54,7 +54,7 @@ type RouteReportRow = {
   collection: number;
 };
 
-const DEFAULT_ROUTES = ['Ugli', 'Lamta', 'Gudru', 'Ghunadi'];
+const DEFAULT_ROUTES = ['Ugli', 'Lamta'];
 const MONTHS = [
   'January',
   'February',
@@ -119,11 +119,12 @@ const [routeError, setRouteError] = useState("");
   const [deletingTransport, setDeletingTransport] = useState<Transport | null>(null);
   const [feeStudent, setFeeStudent] = useState<Transport | null>(null);
   const [activeReceipt, setActiveReceipt] = useState<TransportFeePayment | null>(null);
+  const [collectFeeAmount, setCollectFeeAmount] = useState<number | undefined>(undefined);
 
   const [formStudentId, setFormStudentId] = useState('');
   const [formRouteName, setFormRouteName] = useState(DEFAULT_ROUTES[0]);
   const [formPickupPoint, setFormPickupPoint] = useState('');
-  const [formMonthlyCharge, setFormMonthlyCharge] = useState('1150');
+  const [formMonthlyCharge, setFormMonthlyCharge] = useState('');
   const [formJoiningDate, setFormJoiningDate] = useState(new Date().toISOString().split('T')[0]);
   const [formStatus, setFormStatus] = useState<TransportStatus>('Active');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -134,7 +135,12 @@ const [routeError, setRouteError] = useState("");
   const [reportType, setReportType] = useState<ReportType>('monthly');
   const [reportMonth, setReportMonth] = useState(CURRENT_MONTH);
   const [reportYear, setReportYear] = useState(CURRENT_YEAR);
-  const [reportStudentSearch, setReportStudentSearch] = useState('');
+  const [reportClassFilter, setReportClassFilter] = useState('All');
+  const [collectFeeMonth, setCollectFeeMonth] = useState(CURRENT_MONTH);
+  const [collectFeeYear, setCollectFeeYear] = useState(CURRENT_YEAR);
+
+  const getReceiptPaidNow = (receipt: TransportFeePayment) =>
+    receipt.currentPaidAmount ?? receipt.paidAmount;
 
   useEffect(() => {
     if (activeSubTab) {
@@ -158,7 +164,13 @@ const [routeError, setRouteError] = useState("");
   const yearOptions = useMemo(() => {
     const currentYearNumber = Number(CURRENT_YEAR);
     const paymentYears = payments.map((payment) => Number(payment.year)).filter((year) => !Number.isNaN(year));
-    const years = new Set<number>([currentYearNumber - 1, currentYearNumber, currentYearNumber + 1, ...paymentYears]);
+    const maxYear = 2035;
+    const years = new Set<number>([
+      currentYearNumber - 1,
+      currentYearNumber,
+      ...Array.from({ length: Math.max(0, maxYear - currentYearNumber) }, (_, index) => currentYearNumber + index + 1),
+      ...paymentYears
+    ]);
     return Array.from(years).sort((a, b) => b - a).map(String);
   }, [payments]);
 
@@ -166,7 +178,7 @@ const [routeError, setRouteError] = useState("");
     setFormStudentId(presetStudentId);
     setFormRouteName(routeOptions[0] || DEFAULT_ROUTES[0]);
     setFormPickupPoint('');
-    setFormMonthlyCharge('1150');
+    setFormMonthlyCharge('');
     setFormJoiningDate(new Date().toISOString().split('T')[0]);
     setFormStatus('Active');
     setFormErrors({});
@@ -346,6 +358,24 @@ const loadRouteReport = useCallback(
     [pendingStudents]
   );
 
+  const classOptions = useMemo(() => {
+    const classSet = new Set<string>();
+
+    transports.forEach((transport) => {
+      if (transport.className) {
+        classSet.add(transport.className);
+      }
+    });
+
+    payments.forEach((payment) => {
+      if (payment.className) {
+        classSet.add(payment.className);
+      }
+    });
+
+    return Array.from(classSet).sort((a, b) => a.localeCompare(b));
+  }, [payments, transports]);
+
   const reportRows = useMemo(() => {
     if (reportType === 'monthly') {
       return monthlyReport;
@@ -359,17 +389,10 @@ const loadRouteReport = useCallback(
   return routeReport;
 }
 
-    const query = reportStudentSearch.trim().toLowerCase();
-    if (!query) {
-      return [];
-    }
-
-    return payments.filter((payment) => {
-      const name = payment.studentName?.toLowerCase() || '';
-      const admissionNo = payment.admissionNo?.toLowerCase() || '';
-      return name.includes(query) || admissionNo.includes(query);
-    });
-  }, [monthlyReport, payments, pendingReportRows, reportStudentSearch, reportType, routeOptions, transports]);
+    return payments.filter((payment) =>
+      reportClassFilter === 'All' || payment.className === reportClassFilter
+    );
+  }, [monthlyReport, payments, pendingReportRows, reportClassFilter, reportType, routeOptions, transports]);
 
   const handleTabChange = (tab: string) => {
     setCurrentTab(tab);
@@ -481,8 +504,16 @@ const loadRouteReport = useCallback(
     setIsEditModalOpen(true);
   };
 
-  const handleOpenCollectFee = (transport: Transport) => {
+  const handleOpenCollectFee = (
+    transport: Transport,
+    month?: string,
+    year?: string,
+    amountToCollect?: number
+  ) => {
     setFeeStudent(transport);
+    setCollectFeeMonth(month || reportMonth);
+    setCollectFeeYear(year || reportYear);
+    setCollectFeeAmount(amountToCollect);
     setCollectSuccessMessage('');
     setIsCollectFeeOpen(true);
   };
@@ -490,7 +521,7 @@ const loadRouteReport = useCallback(
   const handleCollectTransportFee = async (data: {
     month: string;
     year: number;
-    amount: number;
+    paidAmount: number;
     paymentMethod: string;
     remarks: string;
   }) => {
@@ -502,16 +533,10 @@ const loadRouteReport = useCallback(
     try {
       const collectedPayment = await transportFeeApi.collectFee({
         studentId: feeStudent.studentId,
-        studentName: feeStudent.name,
-        admissionNo: feeStudent.admissionNo,
-        className: feeStudent.className,
-        routeName: feeStudent.routeName,
-        pickupPoint: feeStudent.pickupPoint,
-        monthlyCharge: feeStudent.monthlyCharge,
         month: data.month,
         year: String(data.year),
-        amount: Number(data.amount),
-        paymentMethod: data.paymentMethod as TransportFeePayment['paymentMethod'],
+        paidAmount: Number(data.paidAmount),
+        paymentMethod: data.paymentMethod as TransportFeePayment["paymentMethod"],
         remarks: data.remarks.trim() || undefined
       });
 
@@ -609,7 +634,25 @@ const loadRouteReport = useCallback(
           <div class="row"><span class="label">Payment Method</span><span class="value">${receipt.paymentMethod}</span></div>
           <div class="row"><span class="label">Payment Date</span><span class="value">${formatDate(receipt.date)}</span></div>
           ${receipt.remarks ? `<div class="row"><span class="label">Remarks</span><span class="value">${receipt.remarks}</span></div>` : ''}
-          <div class="amount"><span>Total Paid</span><span>₹${receipt.amount}</span></div>
+          <div class="row">
+  <span class="label">Monthly Charge</span>
+  <span class="value">₹${receipt.monthlyCharge}</span>
+</div>
+
+<div class="row">
+  <span class="label">Paid Amount This Time</span>
+  <span class="value">₹${getReceiptPaidNow(receipt)}</span>
+</div>
+
+<div class="row">
+  <span class="label">Due Amount</span>
+  <span class="value">₹${receipt.dueAmount}</span>
+</div>
+
+<div class="row">
+  <span class="label">Status</span>
+  <span class="value">${receipt.status}</span>
+</div>
           <script>window.onload = function() { window.print(); };</script>
         </body>
       </html>
@@ -624,7 +667,7 @@ const loadRouteReport = useCallback(
       exportToExcel(
         reportRows.map((row: any) => ({ ...row, date: formatDate(row.date) })),
         ['Student Name', 'Admission No', 'Route Name', 'Amount', 'Payment Date'],
-        ['studentName', 'admissionNo', 'routeName', 'amount', 'date'],
+        ['studentName', 'admissionNo', 'routeName', 'paidAmount', 'date'],
         `transport_monthly_${reportMonth}_${reportYear}`
       );
       return;
@@ -657,7 +700,7 @@ const loadRouteReport = useCallback(
         date: formatDate(row.date)
       })),
       ['Receipt No', 'Service Period', 'Amount', 'Payment Method', 'Payment Date'],
-      ['receiptNo', 'servicePeriod', 'amount', 'paymentMethod', 'date'],
+      ['receiptNo', 'servicePeriod', 'paidAmount', 'paymentMethod', 'date'],
       'transport_student_ledger'
     );
   };
@@ -671,7 +714,7 @@ const loadRouteReport = useCallback(
           row.studentName,
           row.admissionNo,
           row.routeName,
-          `₹${row.amount}`,
+          `₹${row.paidAmount}`,
           formatDate(row.date)
         ]),
         'transport_report'
@@ -715,7 +758,7 @@ const loadRouteReport = useCallback(
       (reportRows as TransportFeePayment[]).map((row) => [
         row.receiptNo,
         `${row.month} ${row.year}`,
-        `₹${row.amount}`,
+        `₹${row.paidAmount}`,
         row.paymentMethod,
         formatDate(row.date)
       ]),
@@ -834,30 +877,55 @@ const loadRouteReport = useCallback(
               </p>
 
               <div className="flex h-[200px] items-end justify-between border-b border-slate-200 px-2 pt-2">
-                {MONTHS.slice(0, 7).map((month) => {
-                  const total = payments
-                    .filter((payment) => payment.month === month)
-                    .reduce((sum, payment) => sum + payment.amount, 0);
-                  const maxCollection = Math.max(
-                    1,
-                    ...MONTHS.slice(0, 7).map((name) =>
-                      payments
-                        .filter((payment) => payment.month === name)
-                        .reduce((sum, payment) => sum + payment.amount, 0)
-                    )
-                  );
-                  const height = Math.max(8, (total / maxCollection) * 85);
+               {(() => {
+  const chartMonths = MONTHS.slice(0, 7);
+const collections = chartMonths.map((month, index) =>
+  payments
+    .filter((payment) => {
+      const paymentMonth =
+        Number(payment.month) ||
+        MONTHS.indexOf(String(payment.month)) + 1;
 
-                  return (
-                    <div key={month} className="group flex flex-1 flex-col items-center">
-                      <span className="mb-2 text-[10px] font-extrabold text-blue-600 opacity-0 transition-opacity group-hover:opacity-100">
-                        ₹{total}
-                      </span>
-                      <div style={{ height: `${height}%` }} className="w-8 rounded-t-md bg-blue-500 transition-colors hover:bg-blue-600" />
-                      <span className="mt-2 text-[10px] font-bold text-slate-500">{month.slice(0, 3)}</span>
-                    </div>
-                  );
-                })}
+      return (
+        paymentMonth === index + 1 &&
+        String(payment.year) === CURRENT_YEAR
+      );
+    })
+    .reduce(
+      (sum, payment) => sum + Number(payment.paidAmount || 0),
+      0
+    )
+);
+
+  const maxCollection = Math.max(...collections, 1);
+
+  return chartMonths.map((month, index) => {
+    const total = collections[index];
+
+    let height = 8;
+
+    if (total > 0) {
+      height = Math.max(20, (total / maxCollection) * 150);
+    }
+
+    return (
+      <div key={month} className="group flex flex-1 flex-col items-center justify-end">
+        <span className="mb-2 text-[10px] font-extrabold text-blue-600 opacity-0 transition-opacity group-hover:opacity-100">
+          ₹{total}
+        </span>
+
+        <div
+          style={{ height: `${height}px` }}
+          className="w-8 rounded-t-md bg-blue-500 transition-all duration-300 hover:bg-blue-600"
+        />
+
+        <span className="mt-2 text-[10px] font-bold text-slate-500">
+          {month.slice(0, 3)}
+        </span>
+      </div>
+    );
+  });
+})()}
               </div>
             </Card>
 
@@ -875,15 +943,15 @@ const loadRouteReport = useCallback(
                   const routeStudents = transports.filter(
                     (transport) => transport.routeName === route && transport.status === 'Active'
                   );
-                  const routeRevenue = payments
-                    .filter((payment) => payment.routeName === route)
-                    .reduce((sum, payment) => sum + payment.amount, 0);
+                 const routeRevenue = payments
+  .filter((payment) => payment.routeName === route)
+  .reduce((sum, payment) => sum + payment.paidAmount, 0);
                   const maxRevenue = Math.max(
                     1,
                     ...routeOptions.map((name) =>
                       payments
                         .filter((payment) => payment.routeName === name)
-                        .reduce((sum, payment) => sum + payment.amount, 0)
+                        .reduce((sum, payment) => sum + payment.paidAmount, 0)
                     )
                   );
                   const width = Math.max(5, (routeRevenue / maxRevenue) * 100);
@@ -919,7 +987,7 @@ const loadRouteReport = useCallback(
                 <select
                   value={reportType}
                   onChange={(event) => setReportType(event.target.value as ReportType)}
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-hidden focus:border-blue-500 cursor-pointer"
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 cursor-pointer"
                 >
                   <option value="monthly">Monthly Collection</option>
                   <option value="pending">Pending Commuters</option>
@@ -935,7 +1003,7 @@ const loadRouteReport = useCallback(
                     <select
                       value={reportMonth}
                       onChange={(event) => setReportMonth(event.target.value)}
-                      className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-hidden focus:border-blue-500 cursor-pointer"
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 cursor-pointer"
                     >
                       {MONTHS.map((month) => (
                         <option key={month} value={month}>{month}</option>
@@ -948,7 +1016,7 @@ const loadRouteReport = useCallback(
                     <select
                       value={reportYear}
                       onChange={(event) => setReportYear(event.target.value)}
-                      className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-hidden focus:border-blue-500 cursor-pointer"
+                      className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 cursor-pointer"
                     >
                       {yearOptions.map((year) => (
                         <option key={year} value={year}>{year}</option>
@@ -958,14 +1026,17 @@ const loadRouteReport = useCallback(
                 </>
               ) : (
                 <div className="flex flex-col gap-1.5 md:col-span-2">
-                  <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Search Student</label>
-                  <input
-                    type="text"
-                    value={reportStudentSearch}
-                    onChange={(event) => setReportStudentSearch(event.target.value)}
-                    placeholder="Enter student name or admission number..."
-                    className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-hidden focus:border-blue-500"
-                  />
+                  <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Select Class</label>
+                  <select
+                    value={reportClassFilter}
+                    onChange={(event) => setReportClassFilter(event.target.value)}
+                    className="rounded-lg border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-700 outline-none focus:border-blue-500 cursor-pointer"
+                  >
+                    <option value="All">All Classes</option>
+                    {classOptions.map((className) => (
+                      <option key={className} value={className}>{className}</option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -1053,16 +1124,16 @@ const loadRouteReport = useCallback(
                           {reportType === 'monthly' && (
                             <>
                               <td className="p-3 font-bold text-slate-800">{row.studentName}</td>
-                              <td className="p-3 font-mono text-slate-650">{row.admissionNo}</td>
+                              <td className="p-3 font-mono text-slate-600">{row.admissionNo}</td>
                               <td className="p-3 text-slate-500">{row.routeName}</td>
-                              <td className="p-3 font-bold text-slate-800">₹{row.amount}</td>
+                              <td className="p-3 font-bold text-slate-800">₹{row.paidAmount}</td>
                               <td className="p-3 font-medium text-slate-400">{formatDate(row.date)}</td>
                             </>
                           )}
                           {reportType === 'pending' && (
                             <>
                               <td className="p-3 font-bold text-slate-800">{row.name}</td>
-                              <td className="p-3 font-mono text-slate-650">{row.admissionNo}</td>
+                              <td className="p-3 font-mono text-slate-600">{row.admissionNo}</td>
                               <td className="p-3 text-slate-500">{row.className}</td>
                               <td className="p-3 text-slate-500">{row.routeName}</td>
                               <td className="p-3 font-bold text-rose-600">₹{row.monthlyCharge}</td>
@@ -1071,15 +1142,15 @@ const loadRouteReport = useCallback(
                           {reportType === 'route' && (
                             <>
                               <td className="p-3 font-bold text-slate-800">{row.route}</td>
-                              <td className="p-3 text-slate-650">{row.studentsCount}</td>
+                              <td className="p-3 text-slate-600">{row.studentsCount}</td>
                               <td className="p-3 font-bold text-emerald-600">₹{row.collection}</td>
                             </>
                           )}
                           {reportType === 'student' && (
                             <>
                               <td className="p-3 font-mono font-bold text-slate-850">{row.receiptNo}</td>
-                              <td className="p-3 text-slate-650">{row.month} {row.year}</td>
-                              <td className="p-3 font-extrabold text-slate-850">₹{row.amount}</td>
+                              <td className="p-3 text-slate-600">{row.month} {row.year}</td>
+                              <td className="p-3 font-extrabold text-slate-850">₹{row.paidAmount}</td>
                               <td className="p-3 font-bold text-slate-500">{row.paymentMethod}</td>
                               <td className="p-3 text-slate-400">{formatDate(row.date)}</td>
                             </>
@@ -1134,10 +1205,14 @@ const loadRouteReport = useCallback(
       <CollectTransportFeeModal
         isOpen={isCollectFeeOpen}
         transport={feeStudent}
+        initialMonth={collectFeeMonth}
+        initialYear={collectFeeYear}
+        initialAmount={collectFeeAmount}
         loading={collectLoading}
         onClose={() => {
           setIsCollectFeeOpen(false);
           setFeeStudent(null);
+          setCollectFeeAmount(undefined);
         }}
         onSubmit={handleCollectTransportFee}
       />
@@ -1183,7 +1258,10 @@ const loadRouteReport = useCallback(
                 ['Route', activeReceipt.routeName],
                 ['Month', activeReceipt.month],
                 ['Year', activeReceipt.year],
-                ['Amount', `₹${activeReceipt.amount}`],
+                ['Monthly Charge', `₹${activeReceipt.monthlyCharge}`],
+                ['Paid Amount This Time', `₹${getReceiptPaidNow(activeReceipt)}`],
+                ['Due Amount', `₹${activeReceipt.dueAmount}`],
+                ['Status', activeReceipt.status],
                 ['Payment Method', activeReceipt.paymentMethod],
                 ['Receipt Number', activeReceipt.receiptNo],
                 ['Date', formatDate(activeReceipt.date)],
@@ -1202,7 +1280,7 @@ const loadRouteReport = useCallback(
 
             <div className="mt-4 flex items-center justify-between rounded-xl border border-slate-200 bg-white p-4">
               <span className="text-xs font-bold uppercase text-slate-500">Total Paid</span>
-              <span className="text-xl font-black text-emerald-600">₹{activeReceipt.amount}</span>
+              <span className="text-xl font-black text-emerald-600">₹{activeReceipt.paidAmount}</span>
             </div>
           </div>
         )}
@@ -1230,7 +1308,7 @@ const loadRouteReport = useCallback(
               value={formStudentId}
               onChange={(event) => setFormStudentId(event.target.value)}
               disabled={Boolean(assignStudentIdPreset)}
-              className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-hidden transition-all hover:border-slate-300 focus:border-blue-500 cursor-pointer"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-none transition-all hover:border-slate-300 focus:border-blue-500 cursor-pointer"
             >
               <option value="">-- Choose a Student --</option>
               {unassignedStudents.map((student) => (
@@ -1255,7 +1333,7 @@ const loadRouteReport = useCallback(
               <select
                 value={formRouteName}
                 onChange={(event) => setFormRouteName(event.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-hidden hover:border-slate-300 focus:border-blue-500 cursor-pointer"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-none hover:border-slate-300 focus:border-blue-500 cursor-pointer"
               >
                 {routeOptions.map((route) => (
                   <option key={route} value={route}>{route}</option>
@@ -1269,6 +1347,7 @@ const loadRouteReport = useCallback(
               value={formMonthlyCharge}
               onChange={(event) => setFormMonthlyCharge(event.target.value)}
               error={formErrors.monthlyCharge}
+              helperText="Enter the transport fee manually."
               required
             />
           </div>
@@ -1340,7 +1419,7 @@ const loadRouteReport = useCallback(
               <select
                 value={formRouteName}
                 onChange={(event) => setFormRouteName(event.target.value)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-hidden hover:border-slate-300 focus:border-blue-500 cursor-pointer"
+                className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2 text-sm text-slate-900 outline-none hover:border-slate-300 focus:border-blue-500 cursor-pointer"
               >
                 {routeOptions.map((route) => (
                   <option key={route} value={route}>{route}</option>
@@ -1354,6 +1433,7 @@ const loadRouteReport = useCallback(
               value={formMonthlyCharge}
               onChange={(event) => setFormMonthlyCharge(event.target.value)}
               error={formErrors.monthlyCharge}
+              helperText="Enter the transport fee manually."
               required
             />
           </div>

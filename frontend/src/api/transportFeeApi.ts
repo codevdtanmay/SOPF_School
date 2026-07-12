@@ -1,5 +1,20 @@
 import axiosInstance from '../services/axiosInstance';
 
+const reverseMonthMap: Record<number, string> = {
+  1: 'January',
+  2: 'February',
+  3: 'March',
+  4: 'April',
+  5: 'May',
+  6: 'June',
+  7: 'July',
+  8: 'August',
+  9: 'September',
+  10: 'October',
+  11: 'November',
+  12: 'December'
+};
+
 export interface TransportFeePayment {
   id: string;
   receiptNo: string;
@@ -7,41 +22,68 @@ export interface TransportFeePayment {
   studentName: string;
   admissionNo: string;
   className: string;
+  section?: string;
+  academicYear?: string;
   routeName: string;
   pickupPoint: string;
   monthlyCharge: number;
   month: string;
   year: string;
-  amount: number;
+  amount: number;       // Monthly Charge
+  paidAmount: number;
+  dueAmount: number;
+  status: "Paid" | "Partial" | "Pending";
   paymentMethod: 'Cash' | 'UPI' | 'Card' | 'Bank Transfer';
   remarks?: string;
   date: string;
+  currentPaidAmount?: number;
 }
 
 const mapTransportPaymentResponse = (p: any): TransportFeePayment => {
   const s = p.studentId || {};
   const t = p.transportId || {};
+  const numericMonth = Number(p.month);
+  const mappedMonth = reverseMonthMap[numericMonth] || String(p.month);
 
   return {
-    id: p._id || p.id,
-    receiptNo: p.receiptNo,
-    studentId: s._id || s.id || p.studentId,
-    studentName: s.userId?.name || p.studentName,
-    admissionNo: s.admissionNo || p.admissionNo,
-    className: s.class
-      ? `${s.class}-${s.section}`
-      : p.className,
-    routeName: t.routeName || p.routeName,
-    pickupPoint: t.pickupPoint || p.pickupPoint,
-    monthlyCharge: Number(t.monthlyCharge || p.monthlyCharge),
-    month: String(p.month),
-    year: String(p.year),
-    amount: Number(p.amount),
-    paymentMethod: p.paymentMethod,
-    remarks: p.remarks,
-    date: p.paymentDate || p.date
-  };
+  id: p._id || p.id,
+  receiptNo: p.receiptNo,
+
+  studentId: s._id || s.id || p.studentId,
+  studentName: p.studentName || s.userId?.name,
+  admissionNo: p.admissionNo || s.admissionNo,
+
+  className: p.className || s.class,
+  section: p.section || s.section,
+  academicYear: p.academicYear || s.academicYear,
+
+  routeName: p.routeName || t.routeName,
+  pickupPoint: p.pickupPoint || t.pickupPoint,
+  monthlyCharge: Number(p.monthlyCharge ?? t.monthlyCharge ?? p.amount ?? 0),
+
+  month: mappedMonth,
+  year: String(p.year),
+
+  amount: Number(p.amount),
+  paidAmount: Number(p.paidAmount ?? p.amount),
+  dueAmount: Number(p.dueAmount ?? 0),
+  status: p.status ?? "Pending",
+  currentPaidAmount: p.currentPaidAmount != null ? Number(p.currentPaidAmount) : undefined,
+
+  paymentMethod: p.paymentMethod,
+  remarks: p.remarks,
+  date: p.paymentDate || p.date
 };
+};
+
+export interface CollectTransportFeePayload {
+  studentId: string;
+  month: string;
+  year: string;
+  paidAmount: number;
+  paymentMethod: TransportFeePayment["paymentMethod"];
+  remarks?: string;
+}
 
 export const transportFeeApi = {
   getHistory: async (): Promise<TransportFeePayment[]> => {
@@ -53,7 +95,7 @@ export const transportFeeApi = {
   },
 
   collectFee: async (
-    paymentData: Omit<TransportFeePayment, 'id' | 'receiptNo' | 'date'>
+    paymentData: CollectTransportFeePayload
   ): Promise<TransportFeePayment> => {
 
     const monthMap: Record<string, number> = {
@@ -71,15 +113,14 @@ export const transportFeeApi = {
       December: 12
     };
 
-    const payload = {
-      studentId: paymentData.studentId,
-      month:
-        monthMap[paymentData.month] ||
-        Number(paymentData.month),
-      year: Number(paymentData.year),
-      paymentMethod: paymentData.paymentMethod,
-      remarks: paymentData.remarks
-    };
+   const payload = {
+  studentId: paymentData.studentId,
+  month: monthMap[paymentData.month] || Number(paymentData.month),
+  year: Number(paymentData.year),
+  paidAmount: Number(paymentData.paidAmount),
+  paymentMethod: paymentData.paymentMethod,
+  remarks: paymentData.remarks
+};
 
     const response = await axiosInstance.post(
       '/transport-fees/collect',

@@ -31,6 +31,19 @@ import Input from '../../components/common/Input';
 import { SchoolLogo } from '../../components/common/SchoolLogo';
 import { formatDate } from '../../utils/dateFormatter';
 
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from(
+  new Set([
+    CURRENT_YEAR - 4,
+    CURRENT_YEAR - 3,
+    CURRENT_YEAR - 2,
+    CURRENT_YEAR - 1,
+    CURRENT_YEAR,
+    CURRENT_YEAR + 1,
+    CURRENT_YEAR + 2
+  ])
+).map(String);
+
 interface TransferCertificatesProps {
   students: Student[];
   refreshTrigger: number;
@@ -125,23 +138,15 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
     try {
       const payload = {
         studentId: selectedStudentDetails.id,
-        name: selectedStudentDetails.name,
-        admissionNo: selectedStudentDetails.admissionNo || 'ADM-2026-' + Math.floor(1000 + Math.random() * 9000),
-        fatherName: selectedStudentDetails.fatherName || 'Not Specified',
-        motherName: selectedStudentDetails.motherName || 'Not Specified',
-        className: selectedStudentDetails.class || 'General',
-        section: selectedStudentDetails.section || 'A',
-        joiningDate: '2024-04-10', // Default / Fallback joining date
-        category: 'General', // Fallback
         reason: formReason,
         lastAttendanceDate: formLastAttendance,
         conduct: formConduct,
         promotedTo: formPromotedTo,
-        remarks: formRemarks,
+        remarks: formRemarks || undefined,
         issuedBy: formIssuedBy
       };
 
-      const newTC = await tcApi.generateTC(payload);
+      await tcApi.generateTC(payload);
       showToast('success', 'Transfer Certificate Generated Successfully');
       setIsGenerateModalOpen(false);
       
@@ -195,7 +200,7 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
     const cancelled = tcs.filter(tc => tc.status === 'Cancelled').length;
     
     // Calculated for the current month
-    const currentMonthStr = new Date().toISOString().substring(0, 7); // "2026-07"
+    const currentMonthStr = new Date().toISOString().substring(0, 7);
     const thisMonth = tcs.filter(tc => tc.issueDate.startsWith(currentMonthStr) && tc.status === 'Issued').length;
 
     return { total, issued, cancelled, thisMonth };
@@ -235,7 +240,7 @@ const filteredTCs = useMemo(() => {
   // Export to Excel handler
   const handleExportExcel = () => {
     const headers = ['TC Number', 'Student Name', 'Admission No', 'Class', 'Issue Date', 'Reason', 'Status'];
-    const keys = ['tcNumber', 'name', 'admissionNo', 'className', 'issueDate', 'reason', 'status'];
+    const keys = ['tcNumber', 'studentName', 'admissionNo', 'classLeaving', 'issueDate', 'reason', 'status'];
     const formattedData = filteredTCs.map(tc => ({
       ...tc,
       issueDate: formatDate(tc.issueDate)
@@ -601,7 +606,7 @@ This is a computer-generated transfer certificate. Verified under school record 
               disabled={viewingTC.status === 'Cancelled'}
               className={`inline-flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-bold transition-all select-none active:scale-95 shadow-2xs cursor-pointer
                 ${viewingTC.status === 'Cancelled' 
-                  ? 'bg-slate-50 text-slate-400 border-slate-150 cursor-not-allowed opacity-60' 
+                  ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed opacity-60' 
                   : 'bg-white text-slate-600 hover:text-slate-800 border-slate-200 hover:border-slate-300'
                 }
               `}
@@ -615,7 +620,7 @@ This is a computer-generated transfer certificate. Verified under school record 
               disabled={viewingTC.status === 'Cancelled'}
               className={`inline-flex items-center gap-1.5 px-3 py-2 border rounded-lg text-xs font-bold transition-all select-none active:scale-95 shadow-2xs cursor-pointer
                 ${viewingTC.status === 'Cancelled' 
-                  ? 'bg-slate-50 text-slate-400 border-slate-150 cursor-not-allowed opacity-60' 
+                  ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed opacity-60' 
                   : 'bg-white text-slate-600 hover:text-slate-800 border-slate-200 hover:border-slate-300'
                 }
               `}
@@ -640,7 +645,7 @@ This is a computer-generated transfer certificate. Verified under school record 
         </div>
 
         {/* Certificate Display Screen */}
-        <div className="max-w-3xl mx-auto bg-white border border-slate-150 rounded-2xl shadow-md p-6 sm:p-12 md:p-16 relative overflow-hidden print:border-none print:shadow-none print:p-0">
+        <div className="max-w-3xl mx-auto bg-white border border-slate-200 rounded-2xl shadow-md p-6 sm:p-12 md:p-16 relative overflow-hidden print:border-none print:shadow-none print:p-0">
           
           {/* Diagonal Cancelled Watermark */}
           {viewingTC.status === 'Cancelled' && (
@@ -661,7 +666,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                 <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight font-serif uppercase">
                   THE SCHOOL OF PANSY FLOWERS
                 </h2>
-                <p className="text-[10px] sm:text-xs text-slate-450 uppercase tracking-widest font-extrabold">
+                <p className="text-[10px] sm:text-xs text-slate-500 uppercase tracking-widest font-extrabold">
                   Affiliated Academic Institution • Changotola, Balaghat, MP, India
                 </p>
                 <div className="pt-2">
@@ -875,7 +880,7 @@ This is a computer-generated transfer certificate. Verified under school record 
             placeholder="Search by Student Name, Admission No, TC No..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full text-xs font-bold pl-9.5 pr-4 py-2.5 bg-slate-50 hover:bg-slate-50/50 border border-slate-150 rounded-xl outline-none transition-colors focus:border-blue-500 focus:bg-white text-slate-700 shadow-2xs placeholder-slate-400"
+            className="w-full text-xs font-bold pl-9.5 pr-4 py-2.5 bg-slate-50 hover:bg-slate-50/50 border border-slate-200 rounded-xl outline-none transition-colors focus:border-blue-500 focus:bg-white text-slate-700 shadow-sm placeholder-slate-400"
           />
         </div>
 
@@ -886,7 +891,7 @@ This is a computer-generated transfer certificate. Verified under school record 
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="text-xs font-extrabold px-3.5 py-2.5 bg-white border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-600 shadow-2xs"
+            className="text-xs font-extrabold px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-600 shadow-sm"
           >
             <option value="All">All Statuses</option>
             <option value="Issued">Issued</option>
@@ -897,19 +902,19 @@ This is a computer-generated transfer certificate. Verified under school record 
           <select
             value={yearFilter}
             onChange={(e) => setYearFilter(e.target.value)}
-            className="text-xs font-extrabold px-3.5 py-2.5 bg-white border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-600 shadow-2xs"
+            className="text-xs font-extrabold px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-600 shadow-sm"
           >
             <option value="All">All Years</option>
-            <option value="2026">2026</option>
-            <option value="2025">2025</option>
-            <option value="2024">2024</option>
+            {YEAR_OPTIONS.map((year) => (
+              <option key={year} value={year}>{year}</option>
+            ))}
           </select>
 
           {/* Class Filter */}
           <select
             value={classFilter}
             onChange={(e) => setClassFilter(e.target.value)}
-            className="text-xs font-extrabold px-3.5 py-2.5 bg-white border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-600 shadow-2xs"
+            className="text-xs font-extrabold px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-600 shadow-sm"
           >
             <option value="All">All Classes</option>
             {classesList.map(c => (
@@ -951,7 +956,7 @@ This is a computer-generated transfer certificate. Verified under school record 
         {loading ? (
           <div className="py-24 text-center space-y-3">
             <div className="inline-block animate-spin rounded-full h-8 w-8 border-3 border-blue-500 border-t-transparent" />
-            <p className="text-xs text-slate-450 font-bold uppercase tracking-wider animate-pulse">Loading TCs...</p>
+            <p className="text-xs text-slate-500 font-bold uppercase tracking-wider animate-pulse">Loading TCs...</p>
           </div>
         ) : filteredTCs.length === 0 ? (
           <div className="py-24 text-center space-y-4">
@@ -999,7 +1004,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                     <td className="p-3.5 text-slate-500 font-mono">{tc.admissionNo}</td>
                     <td className="p-3.5 text-slate-500">{tc.classLeaving}</td>
                     <td className="p-3.5 text-slate-550">{formatDate(tc.issueDate)}</td>
-                    <td className="p-3.5 text-slate-450 font-medium">{tc.reason}</td>
+                    <td className="p-3.5 text-slate-500 font-medium">{tc.reason}</td>
                     <td className="p-3.5">
                       <Badge 
                         variant={tc.status === 'Issued' ? 'success' : 'danger'}
@@ -1086,7 +1091,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                 value={selectedStudentId}
                 onChange={(e) => setSelectedStudentId(e.target.value)}
                 required
-                className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 hover:bg-slate-50/80 border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 focus:bg-white text-slate-705 shadow-2xs"
+                className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 hover:bg-slate-50/80 border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 focus:bg-white text-slate-700 shadow-sm"
               >
                 <option value="">-- Choose Student Record --</option>
                 {students.map(student => (
@@ -1099,8 +1104,8 @@ This is a computer-generated transfer certificate. Verified under school record 
 
             {/* Read-Only Auto-filled Section */}
             {selectedStudentDetails && (
-              <div className="bg-slate-50 p-4.5 rounded-xl border border-slate-150/60 grid grid-cols-2 gap-3.5 text-[11px]">
-                <div className="col-span-2 pb-1 border-b border-slate-150/40">
+              <div className="bg-slate-50 p-4.5 rounded-xl border border-slate-200/60 grid grid-cols-2 gap-3.5 text-[11px]">
+                <div className="col-span-2 pb-1 border-b border-slate-200/40">
                   <p className="text-[9px] font-extrabold text-blue-600 tracking-wide uppercase">Student Information Profile</p>
                 </div>
                 
@@ -1126,12 +1131,12 @@ This is a computer-generated transfer certificate. Verified under school record 
 
                 <div>
                   <span className="text-slate-400">Joining Date:</span>
-                  <p className="text-slate-800 mt-0.5">2024-04-10</p>
+                  <p className="text-slate-800 mt-0.5">{selectedStudentDetails.joiningDate || 'Not Specified'}</p>
                 </div>
 
                 <div>
                   <span className="text-slate-400">Category:</span>
-                  <p className="text-slate-800 mt-0.5">General</p>
+                  <p className="text-slate-800 mt-0.5">{selectedStudentDetails.category || 'General'}</p>
                 </div>
               </div>
             )}
@@ -1145,7 +1150,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                 <select
                   value={formReason}
                   onChange={(e) => setFormReason(e.target.value)}
-                  className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                  className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                 >
                   {reasonsList.map(r => (
                     <option key={r} value={r}>{r}</option>
@@ -1161,7 +1166,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                   value={formLastAttendance}
                   onChange={(e) => setFormLastAttendance(e.target.value)}
                   required
-                  className="w-full text-xs font-bold px-3 py-1.5 bg-white border border-slate-150 rounded-xl outline-none focus:border-blue-500 text-slate-700 shadow-2xs"
+                  className="w-full text-xs font-bold px-3 py-1.5 bg-white border border-slate-200 rounded-xl outline-none focus:border-blue-500 text-slate-700 shadow-sm"
                 />
               </div>
 
@@ -1171,7 +1176,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                 <select
                   value={formConduct}
                   onChange={(e) => setFormConduct(e.target.value)}
-                  className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                  className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                 >
                   {conductList.map(c => (
                     <option key={c} value={c}>{c}</option>
@@ -1185,7 +1190,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                 <select
                   value={formPromotedTo}
                   onChange={(e) => setFormPromotedTo(e.target.value)}
-                  className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                  className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                 >
                   {classesList.map(c => (
                     <option key={c} value={c}>{c}</option>
@@ -1213,7 +1218,7 @@ This is a computer-generated transfer certificate. Verified under school record 
                   onChange={(e) => setFormRemarks(e.target.value)}
                   rows={3}
                   placeholder="E.g. A well-behaved, disciplined and bright student throughout the academic session."
-                  className="w-full text-xs font-semibold px-3.5 py-2.5 bg-white border border-slate-150 rounded-xl outline-none focus:border-blue-500 text-slate-700 shadow-2xs placeholder-slate-400 resize-none"
+                  className="w-full text-xs font-semibold px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:border-blue-500 text-slate-700 shadow-sm placeholder-slate-400 resize-none"
                 />
               </div>
 

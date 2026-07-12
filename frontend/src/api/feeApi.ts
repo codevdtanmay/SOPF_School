@@ -1,5 +1,12 @@
 import axiosInstance from '../services/axiosInstance';
 
+const normalizeClassLabel = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/^class\s+/i, '')
+    .trim();
+
 export interface FeeHistoryItem {
   id: string;
   receiptNo: string;
@@ -7,35 +14,69 @@ export interface FeeHistoryItem {
   name: string;
   admissionNo: string;
   className: string;
+  section?: string;
+  academicYear?: string;
   amount: number;
+  paidAmount?: number;
+  dueAmount?: number;
+  status?: string;
   paymentMethod: string;
   date: string;
 }
 
 const mapPaymentResponse = (p: any): FeeHistoryItem => {
-  const s = p.studentId || {};
-
   return {
     id: p._id || p.id,
     receiptNo: p.receiptNo,
-    studentId: s._id || s.id || p.studentId,
-    name: s.userId?.name || p.studentName || p.name,
-    admissionNo: s.admissionNo || p.admissionNo,
-    className: s.class
-      ? `${s.class}-${s.section}`
-      : p.className,
-    amount: Number(p.amount),
+    studentId: p.studentId?._id || p.studentId || p.id,
+    name: p.studentName || p.studentId?.userId?.name || p.name,
+    admissionNo: p.admissionNo || p.studentId?.admissionNo,
+    className: p.className || p.studentId?.class || '',
+    section: p.section || p.studentId?.section || '',
+    academicYear: p.academicYear || p.studentId?.academicYear || '',
+    amount: Number(p.amount ?? p.paidAmount ?? 0),
+    paidAmount: Number(p.paidAmount ?? p.amount ?? 0),
+    dueAmount: Number(p.dueAmount ?? 0),
+    status: p.status,
     paymentMethod: p.paymentMethod,
     date: p.paymentDate || p.date
   };
 };
 
 export const feeApi = {
+  getFeeLedger: async (params?: {
+    class?: string;
+    section?: string;
+    academicYear?: string;
+    status?: string;
+    page?: number;
+    limit?: number;
+    search?: string;
+  }) => {
+    const queryParams = new URLSearchParams();
+    if (params?.class && params.class !== 'All') queryParams.append('class', params.class);
+    if (params?.section && params.section !== 'All') queryParams.append('section', params.section);
+    if (params?.academicYear && params.academicYear !== 'All') queryParams.append('academicYear', params.academicYear);
+    if (params?.status && params.status !== 'All') queryParams.append('status', params.status);
+    if (params?.page) queryParams.append('page', String(params.page));
+    if (params?.limit) queryParams.append('limit', String(params.limit));
+    if (params?.search) queryParams.append('search', params.search);
+
+    const response = await axiosInstance.get(`/fees?${queryParams.toString()}`);
+    const data = response.data;
+    return {
+      students: Array.isArray(data?.students) ? data.students : [],
+      pagination: data?.pagination || null
+    };
+  },
+
   getFeeHistory: async (params?: {
     month?: number | string;
     year?: number | string;
+    academicYear?: string;
     paymentMethod?: string;
     studentId?: string;
+    className?: string;
   }) => {
     let historyList: any[] = [];
     let totalCollection = 0;
@@ -73,14 +114,15 @@ const currentDate = new Date();
 const currentMonth = currentDate.getMonth() + 1;
 const currentYear = currentDate.getFullYear();
 
-const response = await axiosInstance.get(
-  "/fees/monthly-report",
-  {
-    params: {
-      month:
-        typeof params?.month === "string"
-          ? monthMap[params.month] || Number(params.month)
-          : params?.month || currentMonth,
+        const response = await axiosInstance.get(
+          "/fees/monthly-report",
+          {
+            params: {
+              academicYear: params?.academicYear,
+              month:
+                typeof params?.month === "string"
+                  ? monthMap[params.month] || Number(params.month)
+                  : params?.month || currentMonth,
 
       year: params?.year || currentYear
     }
@@ -101,15 +143,32 @@ const response = await axiosInstance.get(
       );
     }
 
-    const history = historyList.map(mapPaymentResponse);
+    let history = historyList.map(mapPaymentResponse);
+
+    if (params?.className && params.className !== 'All') {
+      const selectedClass = normalizeClassLabel(params.className);
+
+      history = history.filter((item) => {
+        const itemClass = normalizeClassLabel(`${item.className || ''}${item.section ? `-${item.section}` : ''}`);
+        return (
+          itemClass === selectedClass ||
+          itemClass.includes(selectedClass) ||
+          selectedClass.includes(itemClass)
+        );
+      });
+    }
 
     return {
       history,
       totalCollection:
-        totalCollection ||
+        params?.className && params.className !== 'All'
+          ? history.reduce((sum, item) => sum + item.amount, 0)
+          : totalCollection ||
         history.reduce((sum, item) => sum + item.amount, 0),
       totalPayments:
-        totalPayments || history.length
+        params?.className && params.className !== 'All'
+          ? history.length
+          : totalPayments || history.length
     };
   }
 };

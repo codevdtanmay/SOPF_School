@@ -1,6 +1,6 @@
 import studentModel from "../models/student.model.js";
 import teacherModel from "../models/teacherSchema.model.js";
-import feeModel from "../models/feeHistory.model.js"; // <-- Change this if your filename is different
+import feePaymentModel from "../models/feePayment.model.js";
 
 const getDashboardStats = async (req, res) => {
   try {
@@ -14,17 +14,13 @@ const getDashboardStats = async (req, res) => {
     });
 
     // Students (for pending fees & status)
-    const students = await studentModel.find(
-      { isDeleted: false },
-      "dueAmount status"
-    );
+    const students = await studentModel.find({ isDeleted: false });
 
-    // Total Fees Collected (from Fee collection)
-    const feeAggregation = await feeModel.aggregate([
+    const feeAggregation = await feePaymentModel.aggregate([
       {
         $group: {
           _id: null,
-          total: { $sum: "$amount" }
+          total: { $sum: "$paidAmount" }
         }
       }
     ]);
@@ -32,23 +28,37 @@ const getDashboardStats = async (req, res) => {
     const feesCollected = feeAggregation[0]?.total || 0;
 
     // Pending Fees
-    const pendingFees = students.reduce(
-      (sum, student) => sum + (student.dueAmount || 0),
-      0
+    const paymentSummaries = await Promise.all(
+      students.map(async (student) => {
+        const annualPaidAggregation = await feePaymentModel.aggregate([
+          {
+            $match: {
+              studentId: student._id,
+              academicYear: student.academicYear
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$paidAmount" }
+            }
+          }
+        ]);
+
+        const totalPaid = annualPaidAggregation[0]?.total || 0;
+        return {
+          paid: totalPaid >= (student.totalFee || 0),
+          partial: totalPaid > 0 && totalPaid < (student.totalFee || 0),
+          pending: totalPaid <= 0,
+          due: Math.max(0, (student.totalFee || 0) - totalPaid)
+        };
+      })
     );
 
-    // Status Counts
-    const paidStudents = students.filter(
-      (student) => student.status === "Paid"
-    ).length;
-
-    const partialStudents = students.filter(
-      (student) => student.status === "Partial"
-    ).length;
-
-    const pendingStudents = students.filter(
-      (student) => student.status === "Pending"
-    ).length;
+    const pendingFees = paymentSummaries.reduce((sum, item) => sum + item.due, 0);
+    const paidStudents = paymentSummaries.filter((item) => item.paid).length;
+    const partialStudents = paymentSummaries.filter((item) => item.partial).length;
+    const pendingStudents = paymentSummaries.filter((item) => item.pending).length;
 
     return res.status(200).json({
       success: true,
@@ -77,25 +87,42 @@ const getDashboardStats = async (req, res) => {
 const getFeeSummary = async (req, res) => {
   try {
     const students = await studentModel.find(
-      { isDeleted: false },
-      "dueAmount"
+      { isDeleted: false }
     );
 
-    const feeAggregation = await feeModel.aggregate([
+    const feeAggregation = await feePaymentModel.aggregate([
       {
         $group: {
           _id: null,
-          total: { $sum: "$amount" }
+          total: { $sum: "$paidAmount" }
         }
       }
     ]);
 
     const collected = feeAggregation[0]?.total || 0;
 
-    const pending = students.reduce(
-      (sum, student) => sum + (student.dueAmount || 0),
-      0
+    const pendingTotals = await Promise.all(
+      students.map(async (student) => {
+        const annualPaidAggregation = await feePaymentModel.aggregate([
+          {
+            $match: {
+              studentId: student._id,
+              academicYear: student.academicYear
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              total: { $sum: "$paidAmount" }
+            }
+          }
+        ]);
+        const totalPaid = annualPaidAggregation[0]?.total || 0;
+        return Math.max(0, (student.totalFee || 0) - totalPaid);
+      })
     );
+
+    const pending = pendingTotals.reduce((sum, value) => sum + value, 0);
 
     return res.status(200).json({
       success: true,

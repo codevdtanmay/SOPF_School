@@ -48,7 +48,7 @@ export const DashboardStatsSkeleton: React.FC = () => {
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
       {[1, 2, 3, 4].map((i) => (
-        <div key={i} className="bg-white border border-slate-200/80 rounded-xl p-5 md:p-6 shadow-3xs">
+        <div key={i} className="bg-white border border-slate-200/80 rounded-xl p-5 md:p-6 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <Skeleton className="h-4 w-28" />
             <Skeleton className="h-9 w-9 rounded-lg" />

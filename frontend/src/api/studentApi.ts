@@ -1,5 +1,8 @@
 import axiosInstance from '../services/axiosInstance';
-import { Student } from '../types';
+import { FinancialHistoryEntry, PromotionHistoryEntry, Student } from '../types';
+
+const CURRENT_YEAR = new Date().getFullYear();
+const DEFAULT_ACADEMIC_SESSION = `${CURRENT_YEAR}-${String(CURRENT_YEAR + 1).slice(-2)}`;
 
 const mapStudentResponse = (s: any): Student => {
   if (!s) return s;
@@ -19,6 +22,8 @@ const mapStudentResponse = (s: any): Student => {
     class: s.class || '',
     section: s.section || '',
     rollNo: s.rollNo != null ? Number(s.rollNo) : undefined,
+    academicYear: s.academicYear || DEFAULT_ACADEMIC_SESSION,
+    lifecycleStatus: s.lifecycleStatus || 'Active',
     fatherName: s.fatherName || '',
     motherName: s.motherName || '',
     phone: s.phone || '',
@@ -89,6 +94,8 @@ export const studentApi = {
     category?: string;
     village?: string;
     class?: string;
+    academicYear?: string;
+    lifecycleStatus?: string;
     sortBy?: string;
     order?: string;
     search?: string;
@@ -101,6 +108,8 @@ export const studentApi = {
         if (params.category && params.category !== 'All') queryParams.append('category', params.category);
         if (params.village) queryParams.append('village', params.village);
         if (params.class && params.class !== 'All') queryParams.append('class', params.class);
+        if (params.academicYear && params.academicYear !== 'All') queryParams.append('academicYear', params.academicYear);
+        if (params.lifecycleStatus && params.lifecycleStatus !== 'All') queryParams.append('lifecycleStatus', params.lifecycleStatus);
         if (params.sortBy) queryParams.append('sortBy', params.sortBy);
         if (params.order) queryParams.append('order', params.order);
         if (params.search) queryParams.append('search', params.search);
@@ -136,6 +145,76 @@ export const studentApi = {
         pagination: { page: 1, totalPages: 1, totalStudents: 0 }
       };
     }
+  },
+
+  getPromotionAcademicYears: async (): Promise<string[]> => {
+    try {
+      const response = await axiosInstance.get('/student/promotion/academic-years');
+      const data = response.data;
+      return Array.isArray(data?.academicYears) ? data.academicYears : [];
+    } catch (e) {
+      return [DEFAULT_ACADEMIC_SESSION, `${CURRENT_YEAR + 1}-${String(CURRENT_YEAR + 2).slice(-2)}`];
+    }
+  },
+
+  getPromotionHistory: async (): Promise<PromotionHistoryEntry[]> => {
+    try {
+      const response = await axiosInstance.get('/student/promotion/history');
+      const data = response.data;
+      const history = Array.isArray(data?.history) ? data.history : [];
+
+      return history.map((entry: any) => ({
+        id: entry.id || entry._id,
+        promotionDate: entry.promotionDate || '',
+        promotedBy: entry.promotedBy || '',
+        promotedById: entry.promotedById || '',
+        studentId: entry.studentId || '',
+        studentName: entry.studentName || '',
+        admissionNo: entry.admissionNo || '',
+        oldClass: entry.oldClass || '',
+        newClass: entry.newClass || '',
+        oldSection: entry.oldSection || '',
+        newSection: entry.newSection || '',
+        oldAcademicYear: entry.oldAcademicYear || '',
+        newAcademicYear: entry.newAcademicYear || '',
+        reason: entry.reason || ''
+      }));
+    } catch (e) {
+      return [];
+    }
+  },
+
+  promoteStudents: async (payload: {
+    currentAcademicYear: string;
+    destinationAcademicYear: string;
+    currentClass: string;
+    currentSection?: string;
+    destinationClass: string;
+    destinationSection?: string;
+    selectedStudentIds: string[];
+    promoteAllStudents: boolean;
+    reason?: string;
+  }): Promise<{
+    message: string;
+    summary: {
+      promoted: number;
+      skipped: number;
+      alreadyExisted: number;
+      totalSelected: number;
+      promoteAllStudents: boolean;
+    };
+    promotedStudents: any[];
+    skippedStudents: any[];
+    alreadyExistedStudents: any[];
+  }> => {
+    const response = await axiosInstance.post('/student/promotion', payload);
+    return response.data;
+  },
+
+  getStudentFinancialHistory: async (studentId: string): Promise<FinancialHistoryEntry[]> => {
+    const response = await axiosInstance.get(`/student/${studentId}/financial-history`);
+    const data = response.data;
+    return Array.isArray(data?.history) ? data.history : [];
   },
 
   addStudent: async (studentData: Omit<Student, 'id' | 'rollNumber' | 'admissionDate'>): Promise<Student> => {
@@ -199,7 +278,14 @@ return counts;
     }
   },
 
-  collectFee: async (paymentData: { studentId: string; amountPaid: number; paymentMethod: string }) => {
+  collectFee: async (paymentData: {
+    studentId: string;
+    amountPaid: number;
+    paymentMethod: string;
+    academicYear?: string;
+    className?: string;
+    section?: string;
+  }) => {
     const response = await axiosInstance.post('/fees/collect', paymentData);
     return response.data;
   },

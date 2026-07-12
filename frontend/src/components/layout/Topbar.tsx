@@ -27,10 +27,11 @@ export const Topbar: React.FC<TopbarProps> = ({
   const { logout, user } = useAuth();
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const currentYear = new Date().getFullYear();
 
   // Hardcoded notifications corresponding to latest server notice updates
   const notifications = [
-    { id: 1, text: 'New High Priority Notice: "Pansy Fest 2026"', type: 'notice', read: false, time: '10 mins ago' },
+    { id: 1, text: `New High Priority Notice: "Pansy Fest ${currentYear}"`, type: 'notice', read: false, time: '10 mins ago' },
     { id: 2, text: 'Dr. Clara Rivers join date scheduled for tomorrow', type: 'system', read: false, time: '2 hours ago' },
     { id: 3, text: 'Quarterly Audit: Financial ledger updated', type: 'fee', read: true, time: '1 day ago' },
   ];
@@ -54,25 +55,15 @@ export const Topbar: React.FC<TopbarProps> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search students, teachers, notices..."
-            className="w-full text-xs font-medium pl-9 pr-4 py-2 border border-slate-200 hover:border-slate-300/80 bg-slate-50/60 focus:bg-white rounded-lg focus:outline-hidden focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all text-slate-800 placeholder-slate-400"
+            className="w-full text-xs font-medium pl-9 pr-4 py-2 border border-slate-200 hover:border-slate-300/80 bg-slate-50/60 focus:bg-white rounded-lg focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5 transition-all text-slate-800 placeholder-slate-400"
           />
         </div>
       </div>
 
       {/* Utilities Action Group */}
-      <div className="flex items-center gap-2 md:gap-4">
-        {/* Academic Tag */}
-        <div className="hidden lg:flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 border border-amber-200/50 text-amber-800 text-[10px] font-bold tracking-wide uppercase rounded-full">
-          <Sparkles size={11} className="text-amber-500 animate-spin-pulse" />
-          <span>AY: 2026-2027</span>
-        </div>
+      
 
-        {/* Time Badge */}
-        <div className="hidden sm:flex items-center gap-1.5 text-slate-500 text-xs font-semibold select-none border border-slate-100 rounded-lg px-2.5 py-1.5 bg-slate-50">
-          <Calendar size={13} className="text-slate-400" />
-          <span>June 2026</span>
-        </div>
-
+      <div className="flex items-center gap-3">
         {/* Notifications Icon & Drawer */}
         <div className="relative">
           <button 

@@ -1,4 +1,5 @@
 const { app, BrowserWindow } = require("electron");
+const path = require("path");
 
 let mainWindow;
 
@@ -19,7 +20,12 @@ app.whenReady().then(async () => {
     // // Open DevTools
     // mainWindow.webContents.openDevTools();
 
-    mainWindow.loadURL(`http://127.0.0.1:${port}`);
+    try {
+      await mainWindow.loadURL(`http://127.0.0.1:${port}`);
+    } catch (loadError) {
+      console.warn("Falling back to local frontend bundle:", loadError.message);
+      await mainWindow.loadFile(path.join(__dirname, "../backend/dist/index.html"));
+    }
   } catch (err) {
     console.error("Failed to start app:", err);
   }

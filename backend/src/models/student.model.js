@@ -19,14 +19,20 @@ const studentSchema = new mongoose.Schema(
       required: true
     },
 
-    section: {
-      type: String,
-      required: true
-    },
-
     rollNo: {
       type: Number,
       required: true
+    },
+
+    academicYear: {
+      type: String,
+      default: ""
+    },
+
+    lifecycleStatus: {
+      type: String,
+      enum: ["Active", "Left", "Alumni", "Transferred"],
+      default: "Active"
     },
 
     fatherName: {
@@ -186,6 +192,8 @@ const studentSchema = new mongoose.Schema(
 );
 
 studentSchema.index({ class: 1 });
+studentSchema.index({ academicYear: 1, class: 1 });
+studentSchema.index({ lifecycleStatus: 1 });
 studentSchema.index({ category: 1 });
 studentSchema.index({ "address.village": 1 });
 

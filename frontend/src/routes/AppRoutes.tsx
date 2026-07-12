@@ -42,6 +42,7 @@ const AppRoutesContent: React.FC = () => {
                 currentTab={currentTab} 
                 setCurrentTab={setCurrentTab}
                 searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
               />
             </DashboardLayout>
           </ProtectedRoute>

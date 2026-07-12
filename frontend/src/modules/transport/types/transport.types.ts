@@ -4,6 +4,8 @@ export interface Transport {
   name: string;
   admissionNo: string;
   className: string;
+  section?: string;
+  academicYear?: string;
 
   routeName: string;
   pickupPoint: string;
@@ -13,6 +15,11 @@ export interface Transport {
   joiningDate: string;
 
   status: "Active" | "Inactive";
+  paymentStatus?: "Paid" | "Partial" | "Pending";
+  paidAmount?: number;
+  dueAmount?: number;
+  receiptNo?: string | null;
+  paymentDate?: string | null;
 }
 
 export interface TransportPayment {
@@ -27,6 +34,8 @@ export interface TransportPayment {
   admissionNo: string;
 
   className: string;
+  section?: string;
+  academicYear?: string;
 
   routeName: string;
 
@@ -39,6 +48,9 @@ export interface TransportPayment {
   year: string;
 
   amount: number;
+  paidAmount: number;
+  dueAmount: number;
+  status: "Paid" | "Partial" | "Pending";
 
   paymentMethod:
     | "Cash"

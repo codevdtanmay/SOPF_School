@@ -17,7 +17,7 @@ type SortField =
   | "studentName"
   | "routeName"
   | "month"
-  | "amount"
+  | "paidAmount"
   | "date";
 const monthsList = [
   "January",
@@ -60,7 +60,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
     const q = histSearchQuery.trim().toLowerCase();
 
     let filtered = payments.filter(p => {
-      const matchesSearch = !q || p.studentName.toLowerCase().includes(q) || p.admissionNo.toLowerCase().includes(q) || String(p.receiptNo).toLowerCase().includes(q);
+      const matchesSearch = !q || p.studentName.toLowerCase().includes(q) || p.admissionNo.toLowerCase().includes(q) || String(p.receiptNo).toLowerCase().includes(q) || String(p.academicYear || '').toLowerCase().includes(q);
       const matchesRoute = histRouteFilter === 'All' || p.routeName === histRouteFilter;
       const matchesMonth = histMonthFilter === 'All' || p.month === histMonthFilter;
       const matchesYear = histYearFilter === 'All' || String(p.year) === histYearFilter;
@@ -108,7 +108,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
   const handleExportPaymentsExcel = () => {
     const headers = ['ReceiptNo', 'StudentName', 'AdmissionNo', 'ClassName', 'RouteName', 'Month', 'Year', 'Amount', 'PaymentMethod', 'Date'];
-    const rows = processedPayments.map(p => [p.receiptNo, p.studentName, p.admissionNo, p.className, p.routeName, p.month, p.year, p.amount, p.paymentMethod, formatDate(p.date)]);
+    const rows = processedPayments.map(p => [p.receiptNo, p.studentName, p.admissionNo, `${p.className}${p.section ? `-${p.section}` : ''}`, p.routeName, p.month, p.year, p.paidAmount, p.paymentMethod, formatDate(p.date)]);
     const csvContent = [headers, ...rows].map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -129,7 +129,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
         payment.admissionNo,
         payment.routeName,
         `${payment.month} ${payment.year}`,
-        `₹${payment.amount}`,
+        `₹${payment.paidAmount}`,
         payment.paymentMethod,
         formatDate(payment.date)
       ]),
@@ -141,16 +141,16 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200/80 p-4 rounded-xl flex flex-col gap-4 shadow-3xs select-none">
+      <div className="bg-white border border-slate-200/80 p-4 rounded-xl flex flex-col gap-4 shadow-sm select-none">
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
           <div className="relative">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none"><Search size={14} /></span>
-            <input type="text" value={histSearchQuery} onChange={(e) => setHistSearchQuery(e.target.value)} placeholder="Search Name, Adm, Receipt No..." className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-lg text-xs font-semibold text-slate-700 outline-hidden placeholder:text-slate-400" />
+            <input type="text" value={histSearchQuery} onChange={(e) => setHistSearchQuery(e.target.value)} placeholder="Search Name, Adm, Receipt No..." className="w-full pl-9 pr-4 py-1.5 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-lg text-xs font-semibold text-slate-700 outline-none placeholder:text-slate-400" />
           </div>
 
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Route:</span>
-            <select value={histRouteFilter} onChange={(e) => setHistRouteFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden">
+            <select value={histRouteFilter} onChange={(e) => setHistRouteFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none">
               <option value="All">All Routes</option>
               {standardRoutes.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
@@ -158,7 +158,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Month:</span>
-            <select value={histMonthFilter} onChange={(e) => setHistMonthFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden">
+            <select value={histMonthFilter} onChange={(e) => setHistMonthFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none">
               <option value="All">All Months</option>
               {monthsList.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
@@ -166,7 +166,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Method:</span>
-            <select value={histMethodFilter} onChange={(e) => setHistMethodFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden">
+            <select value={histMethodFilter} onChange={(e) => setHistMethodFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none">
               <option value="All">All Methods</option>
               {['Cash', 'UPI', 'Card', 'Bank Transfer'].map(met => <option key={met} value={met}>{met}</option>)}
             </select>
@@ -174,7 +174,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
           <div className="flex items-center gap-1.5">
             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">Year:</span>
-            <select value={histYearFilter} onChange={(e) => setHistYearFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden">
+            <select value={histYearFilter} onChange={(e) => setHistYearFilter(e.target.value)} className="w-full px-2 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none">
               <option value="All">All Years</option>
               {yearsList.map(year => <option key={year} value={year}>{year}</option>)}
             </select>
@@ -188,7 +188,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-3xs overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -206,7 +206,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
                   <button onClick={() => { setHistSortField('month' ); setHistSortOrder(o => o === 'asc' ? 'desc' : 'asc'); }} className="flex items-center gap-1 hover:text-slate-700 cursor-pointer">Service Month <ArrowUpDown size={10} /></button>
                 </th>
                 <th className="p-4 text-right">
-                  <button onClick={() => { setHistSortField('amount' ); setHistSortOrder(o => o === 'asc' ? 'desc' : 'asc'); }} className="flex items-center gap-1 justify-end w-full hover:text-slate-700 cursor-pointer">Amount Paid <ArrowUpDown size={10} /></button>
+                  <button onClick={() => { setHistSortField('paidAmount' ); setHistSortOrder(o => o === 'asc' ? 'desc' : 'asc'); }} className="flex items-center gap-1 justify-end w-full hover:text-slate-700 cursor-pointer">Amount Paid <ArrowUpDown size={10} /></button>
                 </th>
                 <th className="p-4 text-center">Payment Method</th>
                 <th className="p-4 text-center">Payment Date</th>
@@ -229,14 +229,14 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
                     <td className="p-4">
                       <div>
                         <div className="font-extrabold text-slate-800">{p.studentName}</div>
-                        <div className="text-[10px] text-slate-450 font-mono">Adm: {p.admissionNo} • {p.className}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">Adm: {p.admissionNo} • {p.className}{p.section ? `-${p.section}` : ''}{p.academicYear ? ` • ${p.academicYear}` : ''}</div>
                       </div>
                     </td>
-                    <td className="p-4 font-medium text-slate-650">{p.routeName}</td>
+                    <td className="p-4 font-medium text-slate-600">{p.routeName}</td>
                     <td className="p-4 font-bold text-slate-600">{p.month} {p.year}</td>
-                    <td className="p-4 text-right font-black text-slate-800">₹{p.amount}</td>
+                    <td className="p-4 text-right font-black text-slate-800">₹{p.paidAmount}</td>
                     <td className="p-4 text-center font-bold text-slate-500"><span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded-md border border-slate-200">{p.paymentMethod}</span></td>
-                    <td className="p-4 text-center text-slate-450 font-semibold">{formatDate(p.date)}</td>
+                    <td className="p-4 text-center text-slate-500 font-semibold">{formatDate(p.date)}</td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-1.5">
                         <button onClick={() => onViewReceipt(p)} className="text-[10px] font-black text-blue-600 hover:text-blue-800 hover:underline cursor-pointer">View Receipt</button>
@@ -253,9 +253,9 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
         {processedPayments.length > 0 && (
           <div className="p-4 border-t border-slate-100 flex items-center justify-between select-none">
-            <div className="text-xs text-slate-450 font-semibold">Showing <span className="font-bold text-slate-700">{Math.min(processedPayments.length, (histPage - 1) * histLimit + 1)}</span> to <span className="font-bold text-slate-700">{Math.min(processedPayments.length, histPage * histLimit)}</span> of <span className="font-bold text-slate-700">{processedPayments.length}</span> receipts</div>
+            <div className="text-xs text-slate-500 font-semibold">Showing <span className="font-bold text-slate-700">{Math.min(processedPayments.length, (histPage - 1) * histLimit + 1)}</span> to <span className="font-bold text-slate-700">{Math.min(processedPayments.length, histPage * histLimit)}</span> of <span className="font-bold text-slate-700">{processedPayments.length}</span> receipts</div>
             <div className="flex items-center gap-1">
-              <select value={histLimit} onChange={(e) => { setHistLimit(Number(e.target.value)); setHistPage(1); }} className="px-2 py-1 border border-slate-200 hover:border-slate-300 rounded text-xs font-bold text-slate-650 cursor-pointer">{[10,20,50,100].map(lim => <option key={lim} value={lim}>{lim} per page</option>)}</select>
+              <select value={histLimit} onChange={(e) => { setHistLimit(Number(e.target.value)); setHistPage(1); }} className="px-2 py-1 border border-slate-200 hover:border-slate-300 rounded text-xs font-bold text-slate-600 cursor-pointer">{[10,20,50,100].map(lim => <option key={lim} value={lim}>{lim} per page</option>)}</select>
               <Button variant="outline" size="xs" onClick={() => setHistPage(p => Math.max(1, p - 1))} disabled={histPage === 1}>Previous</Button>
               <Button variant="outline" size="xs" onClick={() => setHistPage(p => Math.min(Math.ceil(processedPayments.length / histLimit), p + 1))} disabled={histPage * histLimit >= processedPayments.length}>Next</Button>
             </div>

@@ -43,10 +43,14 @@ const createTeacher = async (req, res) => {
       phone
     });
 
+    const populatedTeacher = await teacherModel
+      .findById(teacher._id)
+      .populate("userId", "name email");
+
     return res.status(201).json({
       success: true,
       message: "Teacher Added Successfully",
-      teacher
+      teacher: populatedTeacher
     });
 
   } catch (error) {
@@ -150,18 +154,22 @@ const updateTeacher = async (req, res) => {
       }
     );
 
-    await teacherModel.findByIdAndUpdate(
+    const updatedTeacher = await teacherModel.findByIdAndUpdate(
       id,
       {
         department,
         qualification,
         phone
+      },
+      {
+        returnDocument: "after"
       }
-    );
+    ).populate("userId", "name email");
 
     return res.status(200).json({
       success: true,
-      message: "Teacher Updated Successfully"
+      message: "Teacher Updated Successfully",
+      teacher: updatedTeacher
     });
 
   } catch (error) {
@@ -195,12 +203,10 @@ const deleteTeacher = async (req, res) => {
       deletedAt: new Date()
 });
 
-    await userModel.findByIdAndDelete(
-      teacher.userId, {
+    await userModel.findByIdAndUpdate(teacher.userId, {
       isDeleted: true,
       deletedAt: new Date()
-}
-    );
+    });
 
     return res.status(200).json({
       success: true,

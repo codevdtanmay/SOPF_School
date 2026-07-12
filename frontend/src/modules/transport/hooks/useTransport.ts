@@ -38,7 +38,7 @@ export const useTransport = () => {
         pendingData
       ] = await Promise.all([
 
-        transportApi.getStudents(),
+        ,
 
         transportApi.getHistory(),
 

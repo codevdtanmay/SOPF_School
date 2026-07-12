@@ -56,7 +56,7 @@ export const RecentNotices: React.FC<RecentNoticesProps> = ({ notices, loading =
               className="group p-3.5 bg-slate-50 border border-slate-100 hover:border-slate-200 hover:bg-white rounded-xl transition-all duration-200"
             >
               <div className="flex items-start justify-between gap-3 mb-1.5">
-                <span className="text-xs font-bold text-slate-800 leading-snug group-hover:text-blue-650 transition-colors">
+                <span className="text-xs font-bold text-slate-800 leading-snug group-hover:text-blue-600 transition-colors">
                   {notice.title}
                 </span>
                 <Badge variant={getPriorityVariant(notice.priority)} size="sm">

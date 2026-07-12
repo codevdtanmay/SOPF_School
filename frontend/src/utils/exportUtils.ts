@@ -263,6 +263,8 @@ export const printReceiptBill = (receipt: {
   amount: number;
   paymentMode: string;
   className: string;
+  section?: string;
+  academicYear?: string;
   admissionNo: string;
   dueAmountRemaining: number;
   totalFee: number;
@@ -476,7 +478,14 @@ export const printReceiptBill = (receipt: {
               </div>
               <div class="row-item">
                 <span class="row-lbl">Academic Class:</span>
-                <span class="row-val">${receipt.className}</span>
+                <span class="row-val">${receipt.className}${receipt.section ? `-${receipt.section}` : ''}</span>
+              </div>
+              ${receipt.academicYear ? `
+              <div class="row-item">
+                <span class="row-lbl">Academic Year:</span>
+                <span class="row-val">${receipt.academicYear}</span>
+              </div>
+              ` : ''}
               </div>
               ${receipt.category ? `
               <div class="row-item">

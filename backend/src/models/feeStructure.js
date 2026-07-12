@@ -8,9 +8,20 @@ const feeStructureSchema = new mongoose.Schema(
       trim: true
     },
 
+    academicYear: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
     academicSession: {
       type: String,
-      required: true
+      trim: true
+    },
+
+    monthlyFee: {
+      type: Number,
+      default: 0
     },
 
     admissionFee: {
@@ -79,6 +90,13 @@ deletedAt: {
   }
 );
 feeStructureSchema.pre("save", function () {
+  if (!this.academicSession && this.academicYear) {
+    this.academicSession = this.academicYear;
+  }
+
+  if (!this.academicYear && this.academicSession) {
+    this.academicYear = this.academicSession;
+  }
 
   this.totalFee =
     this.admissionFee +

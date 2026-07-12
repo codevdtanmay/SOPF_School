@@ -9,14 +9,32 @@ export interface TransferCertificate {
   admissionNo: string;
 
   classLeaving: string;
+  section?: string;
+  fatherName?: string;
+  motherName?: string;
+  joiningDate?: string;
+  category?: string;
 
   issueDate: string;
 
   reason: string;
   conduct: string;
+  lastAttendanceDate?: string;
   promotedTo: string;
+  remarks?: string;
+  issuedBy?: string;
 
   status: 'Issued' | 'Cancelled';
+}
+
+export interface GenerateTransferCertificatePayload {
+  studentId: string;
+  reason: string;
+  conduct: string;
+  lastAttendanceDate: string;
+  promotedTo: string;
+  remarks?: string;
+  issuedBy: string;
 }
 
 export const tcApi = {
@@ -37,10 +55,7 @@ export const tcApi = {
   },
 
   generateTC: async (
-    data: Omit<
-      TransferCertificate,
-      'id' | 'tcNumber' | 'issueDate' | 'status'
-    >
+    data: GenerateTransferCertificatePayload
   ): Promise<TransferCertificate> => {
     const response = await axiosInstance.post('/tc', data);
 

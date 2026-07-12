@@ -1,6 +1,18 @@
 import transportPaymentModel from "../models/transportPayment.model.js";
 import transportModel from "../models/transport.model.js";
 import studentModel from "../models/student.model.js";
+import {
+  buildTransportPaymentSnapshot,
+  normalizeAcademicYear
+} from "../utils/feeLifecycle.js";
+
+const parseMonthlyCharge = (value) => {
+  const numericValue = Number(value);
+
+  return Number.isFinite(numericValue) && numericValue > 0
+    ? numericValue
+    : null;
+};
 
 
 
@@ -10,25 +22,23 @@ import studentModel from "../models/student.model.js";
 
 const collectTransportFee = async (req, res) => {
   try {
-
     const {
       studentId,
       month,
       year,
+      paidAmount,
       paymentMethod,
       remarks
     } = req.body;
 
-    if (!studentId || !month || !year) {
+    if (!studentId || !month || !year || paidAmount == null) {
       return res.status(400).json({
         success: false,
-        message: "Student, month and year are required"
+        message: "Student, month, year and paid amount are required"
       });
     }
 
-    const transport = await transportModel.findOne({
-      studentId
-    });
+    const transport = await transportModel.findOne({ studentId });
 
     if (!transport) {
       return res.status(404).json({
@@ -37,64 +47,125 @@ const collectTransportFee = async (req, res) => {
       });
     }
 
-    const alreadyPaid =
-      await transportPaymentModel.findOne({
-        studentId,
-        month,
-        year
-      });
+    const monthlyCharge = parseMonthlyCharge(transport.monthlyCharge);
 
-    if (alreadyPaid) {
-      return res.status(409).json({
+    if (monthlyCharge == null) {
+      return res.status(400).json({
         success: false,
-        message: "Transport fee already paid for this month"
+        message: "Transport monthly charge is missing or invalid"
       });
     }
 
-    const receiptNo =
-      `TR-${Date.now()}`;
-
-    const payment =
-      await transportPaymentModel.create({
-
-        studentId,
-
-        transportId: transport._id,
-
-        receiptNo,
-
-        month,
-
-        year,
-
-        amount:
-          transport.monthlyCharge,
-
-        paymentMethod:
-          paymentMethod || "Cash",
-
-        remarks
+    if (Number(paidAmount) <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid payment amount"
       });
+    }
+
+    if (Number(paidAmount) > monthlyCharge) {
+      return res.status(400).json({
+        success: false,
+        message: "Paid amount cannot exceed monthly charge."
+      });
+    }
+
+    const paidNow = Number(paidAmount);
+
+    let payment = await transportPaymentModel.findOne({
+      studentId,
+      month,
+      year
+    });
+
+    const receiptNo = `TR-${year}${String(month).padStart(2, "0")}-${Date.now()
+      .toString()
+      .slice(-5)}`;
+
+    const totalAmount = monthlyCharge;
+    const student = await studentModel.findById(studentId).populate("userId", "name email");
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+
+    if (!payment) {
+      const dueAmount = totalAmount - paidNow;
+
+      payment = await transportPaymentModel.create(buildTransportPaymentSnapshot({
+        student,
+        transport,
+        month,
+        year,
+        receiptNo,
+        amount: totalAmount,
+        paidAmount: paidNow,
+        dueAmount,
+        status: dueAmount === 0 ? "Paid" : "Partial",
+        paymentMethod: paymentMethod || "Cash",
+        remarks
+      }));
+    } else {
+
+      // Prevent paying more than due amount
+      if (payment.paidAmount + paidNow > payment.amount) {
+        return res.status(400).json({
+          success: false,
+          message: "Payment exceeds due amount."
+        });
+      }
+
+      payment.paidAmount += paidNow;
+      payment.dueAmount = payment.amount - payment.paidAmount;
+
+      if (payment.dueAmount <= 0) {
+        payment.dueAmount = 0;
+        payment.status = "Paid";
+      } else {
+        payment.status = "Partial";
+      }
+
+      payment.paymentMethod = paymentMethod || payment.paymentMethod;
+      payment.remarks = remarks || payment.remarks;
+      payment.paymentDate = new Date();
+
+      await payment.save();
+    }
+
+    await payment.populate([
+      {
+        path: "studentId",
+        populate: {
+          path: "userId",
+          select: "name email"
+        }
+      },
+      {
+        path: "transportId"
+      }
+    ]);
 
     return res.status(201).json({
       success: true,
       message: "Transport fee collected successfully",
-      payment
+      payment: {
+        ...payment.toObject(),
+        currentPaidAmount: paidNow
+      }
     });
 
   } catch (error) {
-
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
       message: "Internal Server Error"
     });
-
   }
 };
-
-
 
 // ==============================
 // Payment History
@@ -154,12 +225,12 @@ const getDashboard = async (req, res) => {
     const totalStudents =
       transports.length;
 
-    const totalCollection =
-      payments.reduce(
-        (sum, payment) =>
-          sum + payment.amount,
-        0
-      );
+   const totalCollection =
+  payments.reduce(
+    (sum, payment) =>
+      sum + payment.paidAmount,
+    0
+  );
 
     const currentMonth =
       new Date().getMonth() + 1;
@@ -168,18 +239,17 @@ const getDashboard = async (req, res) => {
       new Date().getFullYear();
 
     const currentMonthCollection =
-      payments
-        .filter(
-          payment =>
-            payment.month === currentMonth &&
-            payment.year === currentYear
-        )
-        .reduce(
-          (sum, payment) =>
-            sum + payment.amount,
-          0
-        );
-
+  payments
+    .filter(
+      payment =>
+        payment.month === currentMonth &&
+        payment.year === currentYear
+    )
+    .reduce(
+      (sum, payment) =>
+        sum + payment.paidAmount,
+      0
+    );
     return res.status(200).json({
 
       success: true,
@@ -217,7 +287,8 @@ const getMonthlyReport = async (req, res) => {
 
     const {
       month,
-      year
+      year,
+      academicYear
     } = req.query;
 
     if (!month || !year) {
@@ -227,27 +298,26 @@ const getMonthlyReport = async (req, res) => {
       });
     }
 
+    const paymentFilter = {
+      month: Number(month),
+      year: Number(year)
+    };
+
+    if (academicYear) {
+      paymentFilter.academicYear = academicYear;
+    }
+
     const payments =
       await transportPaymentModel
-        .find({
-          month: Number(month),
-          year: Number(year)
-        })
-        .populate({
-          path: "studentId",
-          populate: {
-            path: "userId",
-            select: "name"
-          }
-        })
-        .populate("transportId");
+        .find(paymentFilter)
+        .sort({ paymentDate: -1 });
 
-    const totalCollection =
-      payments.reduce(
-        (sum, payment) =>
-          sum + payment.amount,
-        0
-      );
+  const totalCollection =
+  payments.reduce(
+    (sum, payment) =>
+      sum + payment.paidAmount,
+    0
+  );
 
     return res.status(200).json({
 
@@ -324,24 +394,16 @@ const getPendingStudents = async (req, res) => {
 
         });
 
-      if (!payment) {
-
+      if (!payment || payment.status !== "Paid") {
         pending.push({
-          student:
-            transport.studentId.userId.name,
-
-          admissionNo:
-            transport.studentId.admissionNo,
-
-          route:
-            transport.routeName,
-
-          monthlyCharge:
-            transport.monthlyCharge
+          student: transport.studentId.userId.name,
+          admissionNo: transport.studentId.admissionNo,
+          route: transport.routeName,
+          monthlyCharge: transport.monthlyCharge,
+          status: payment ? payment.status : "Pending",
+          dueAmount: payment ? payment.dueAmount : transport.monthlyCharge
         });
-
       }
-
     }
 
     return res.status(200).json({
@@ -392,9 +454,9 @@ const getRouteReport = async (req, res) => {
           p => p.transportId?.routeName === route
         )
         .reduce(
-          (sum, p) => sum + p.amount,
-          0
-        );
+    (sum, p) => sum + p.paidAmount,
+    0
+);
 
       return {
         route,

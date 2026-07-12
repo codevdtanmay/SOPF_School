@@ -31,7 +31,7 @@ export const QuickActionCard: React.FC<QuickActionCardProps> = ({
         <div className={`h-10 w-10 rounded-xl flex items-center justify-center transition-all duration-300 pointer-events-none mb-4 ${accentBgClass}`}>
           <Icon size={20} />
         </div>
-        <h4 className="text-sm font-bold text-slate-800 mb-1 leading-snug group-hover:text-blue-650 transition-colors">
+        <h4 className="text-sm font-bold text-slate-800 mb-1 leading-snug group-hover:text-blue-600 transition-colors">
           {title}
         </h4>
         <p className="text-xs text-slate-505 leading-relaxed mb-4">

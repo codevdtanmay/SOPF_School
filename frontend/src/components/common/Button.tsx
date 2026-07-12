@@ -24,9 +24,9 @@ export const Button: React.FC<ButtonProps> = ({
   const widthClass = fullWidth ? 'w-full' : '';
   
   const variants = {
-    primary: 'bg-blue-600 hover:bg-blue-700 text-white shadow-xs border border-blue-700/10 focus:ring-blue-500',
-    secondary: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-3xs focus:ring-slate-400',
-    danger: 'bg-red-500 hover:bg-red-600 text-white shadow-xs focus:ring-red-400',
+    primary: 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm border border-blue-700/10 focus:ring-blue-500',
+    secondary: 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-sm focus:ring-slate-400',
+    danger: 'bg-red-500 hover:bg-red-600 text-white shadow-sm focus:ring-red-400',
     outline: 'bg-transparent hover:bg-slate-50 text-slate-700 border border-slate-200 focus:ring-slate-400',
     ghost: 'bg-transparent hover:bg-slate-100 text-slate-600 focus:ring-slate-300'
   };

@@ -6,12 +6,15 @@ import { Transport } from "../types/transport.types";
 interface Props {
   isOpen: boolean;
   transport: Transport | null;
+  initialMonth?: string;
+  initialYear?: string;
+  initialAmount?: number;
   loading?: boolean;
   onClose: () => void;
   onSubmit: (data: {
     month: string;
     year: number;
-    amount: number;
+    paidAmount: number;
     paymentMethod: string;
     remarks: string;
   }) => void;
@@ -35,29 +38,46 @@ const months = [
 const CollectTransportFeeModal: React.FC<Props> = ({
   isOpen,
   transport,
+  initialMonth,
+  initialYear,
+  initialAmount,
   loading = false,
   onClose,
   onSubmit,
 }) => {
   const today = new Date();
+  const defaultMonth = initialMonth && months.includes(initialMonth)
+    ? initialMonth
+    : months[today.getMonth()];
+  const defaultYear = initialYear ? Number(initialYear) : today.getFullYear();
 
-  const [month, setMonth] = useState(months[today.getMonth()]);
-  const [year, setYear] = useState(today.getFullYear());
-  const [amount, setAmount] = useState(0);
+  const [month, setMonth] = useState(defaultMonth);
+  const [year, setYear] = useState(defaultYear);
+  const [paidAmount, setPaidAmount] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState("Cash");
   const [remarks, setRemarks] = useState("");
+  const isPartialPayment = initialAmount != null && transport?.paymentStatus === "Partial";
 
   useEffect(() => {
     if (!transport || !isOpen) {
       return;
     }
 
-    setMonth(months[today.getMonth()]);
-    setYear(today.getFullYear());
-    setAmount(transport.monthlyCharge);
+    const defaultAmount =
+      initialAmount != null && initialAmount > 0
+        ? initialAmount
+        : transport.paymentStatus === "Partial" &&
+          transport.dueAmount != null &&
+          transport.dueAmount > 0
+          ? transport.dueAmount
+          : transport.monthlyCharge;
+
+    setMonth(defaultMonth);
+    setYear(defaultYear);
+    setPaidAmount(defaultAmount);
     setPaymentMethod("Cash");
     setRemarks("");
-  }, [isOpen, transport]);
+  }, [defaultMonth, defaultYear, initialAmount, isOpen, transport]);
 
   if (!isOpen || !transport) return null;
 
@@ -65,7 +85,7 @@ const CollectTransportFeeModal: React.FC<Props> = ({
     onSubmit({
       month,
       year,
-      amount,
+      paidAmount,
       paymentMethod,
       remarks,
     });
@@ -133,15 +153,23 @@ const CollectTransportFeeModal: React.FC<Props> = ({
 
         <div>
           <label className="text-sm font-semibold">
-            Amount
+            Paid Amount
           </label>
 
           <input
             type="number"
             className="w-full border rounded-lg p-2 mt-1"
-            value={amount}
-            onChange={(e) => setAmount(Number(e.target.value))}
+            value={paidAmount}
+            onChange={(e) => setPaidAmount(Number(e.target.value))}
           />
+          <p className="mt-1 text-xs text-slate-500">
+            {isPartialPayment ? 'Remaining Fee' : 'Monthly Charge'}: ₹{isPartialPayment ? initialAmount : transport.monthlyCharge}
+          </p>
+          {transport.paymentStatus === "Partial" && transport.dueAmount != null && transport.dueAmount > 0 && (
+            <p className="mt-1 text-xs font-semibold text-amber-600">
+              Current Due Amount: ₹{transport.dueAmount}
+            </p>
+          )}
         </div>
 
         <div>

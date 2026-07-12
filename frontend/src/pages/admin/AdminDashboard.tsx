@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Users, 
   GraduationCap, 
@@ -26,7 +26,10 @@ import {
   Trash2,
   ShieldAlert,
   Eye,
-  Printer
+  Printer,
+  ChevronDown,
+  ChevronRight,
+  
 } from 'lucide-react';
 
 // Export Utilities
@@ -49,6 +52,7 @@ import RecentActivities from '../../components/dashboard/RecentActivities';
 import FeeCollectionWidget from '../../components/dashboard/FeeCollectionWidget';
 import StudentDistribution from '../../components/dashboard/StudentDistribution';
 import StudentsByCategory from '../../components/dashboard/StudentsByCategory';
+import StudentPromotionModal from './StudentPromotionModal';
 
 // Transport Operations
 import { TransportPanel } from './TransportPanel';
@@ -62,12 +66,13 @@ import { feeStructureApi } from '../../api/feeStructureApi';
 import { feeApi } from '../../api/feeApi';
 import { transportApi } from '../../modules/transport/api/transportApi';
 import { useAuth } from '../../context/AuthContext';
-import { DashboardStats, Notice, Activity, FeeSummary, Student, Teacher, FeeStructure } from '../../types';
+import { DashboardStats, Notice, Activity, FeeSummary, Student, Teacher, FeeStructure, PromotionHistoryEntry, FinancialHistoryEntry } from '../../types';
 
 interface AdminDashboardProps {
   currentTab: string;
   setCurrentTab: (tab: string) => void;
   searchQuery: string;
+  setSearchQuery: (query: string) => void;
 }
 
 interface ReportColumn {
@@ -76,12 +81,35 @@ interface ReportColumn {
   category: 'Basic Information' | 'Personal Information' | 'Parent Information' | 'Government IDs' | 'Address' | 'Fee Information' | 'Transport' | 'Bank Details';
 }
 
+const CURRENT_YEAR = new Date().getFullYear();
+const CURRENT_YEAR_LABEL = String(CURRENT_YEAR);
+const CURRENT_MONTH_LABEL = new Date().toLocaleString('en-US', { month: 'long' });
+const CURRENT_ACADEMIC_SESSION = `${CURRENT_YEAR}-${String(CURRENT_YEAR + 1).slice(-2)}`;
+const PREVIOUS_ACADEMIC_SESSION = `${CURRENT_YEAR - 1}-${String(CURRENT_YEAR).slice(-2)}`;
+const HISTORY_YEAR_OPTIONS = [
+  PREVIOUS_ACADEMIC_SESSION,
+  CURRENT_ACADEMIC_SESSION,
+  `${CURRENT_YEAR + 1}-${String(CURRENT_YEAR + 2).slice(-2)}`,
+  `${CURRENT_YEAR + 2}-${String(CURRENT_YEAR + 3).slice(-2)}`
+];
+
+const FINANCIAL_YEAR_MONTHS = [
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+  'January',
+  'February',
+  'March'
+];
+
 const REPORT_COLUMNS: ReportColumn[] = [
   // Basic Information
   { id: 'name', label: 'Student Name', category: 'Basic Information' },
   { id: 'admissionNo', label: 'Admission No', category: 'Basic Information' },
   { id: 'class', label: 'Class', category: 'Basic Information' },
-  { id: 'section', label: 'Section', category: 'Basic Information' },
   { id: 'rollNo', label: 'Roll No', category: 'Basic Information' },
   
   // Personal Information
@@ -126,13 +154,14 @@ const REPORT_COLUMNS: ReportColumn[] = [
   { id: 'bankBranchName', label: 'Branch Name', category: 'Bank Details' }
 ];
 
-const DEFAULT_REPORT_COLUMNS = ['name', 'admissionNo', 'class', 'section', 'rollNo'];
+const DEFAULT_REPORT_COLUMNS = ['name', 'admissionNo', 'class', 'rollNo'];
 const LOCAL_STORAGE_REPORT_COLS_KEY = 'school_student_report_selected_columns';
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   currentTab, 
   setCurrentTab,
-  searchQuery 
+  searchQuery,
+  setSearchQuery
 }) => {
   // --- STATE SYSTEM ---
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -143,6 +172,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [students, setStudents] = useState<Student[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
+  const [promotionSuccessMessage, setPromotionSuccessMessage] = useState('');
   const [isFeeStructureModalOpen, setIsFeeStructureModalOpen] = useState(false);
   const [editingFeeStructureId, setEditingFeeStructureId] = useState<string | null>(null);
   const [selectedFeeStructure, setSelectedFeeStructure] = useState<FeeStructure | null>(null);
@@ -153,7 +183,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     computerFee: '',
     examFee: '',
     culturalActivityFee: '',
-    academicSession: '2026-27',
+    academicSession: CURRENT_ACADEMIC_SESSION,
     juneAmount: '',
     septemberAmount: '',
     decemberAmount: '',
@@ -168,34 +198,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     id: string;
     name: string;
     className: string;
+    academicYear?: string;
+    category?: string;
+    village?: string;
     dueAmount: number;
     totalFee: number;
     paidAmount: number;
     status: 'Partial' | 'Paid' | 'Pending';
     admissionNo: string;
-    paymentHistory: { date: string; amount: number }[];
+    paymentHistory: { date: string; amount: number; receiptNo?: string; academicYear?: string }[];
   }[]>([]);
 
   const [selectedFeeStudent, setSelectedFeeStudent] = useState<{
     id: string;
     name: string;
     className: string;
+    academicYear?: string;
+    category?: string;
+    village?: string;
     dueAmount: number;
     totalFee: number;
     paidAmount: number;
     status: 'Partial' | 'Paid' | 'Pending';
     admissionNo: string;
-    paymentHistory: { date: string; amount: number }[];
+    paymentHistory: { date: string; amount: number; receiptNo?: string; academicYear?: string }[];
   } | null>(null);
+  const [studentFinancialHistory, setStudentFinancialHistory] = useState<FinancialHistoryEntry[]>([]);
+  const [selectedFinancialYear, setSelectedFinancialYear] = useState<string>('');
+  const [studentFinancialHistoryLoading, setStudentFinancialHistoryLoading] = useState(false);
+  const [studentFinancialHistoryError, setStudentFinancialHistoryError] = useState('');
   
   const [feeSearchQuery, setFeeSearchQuery] = useState('');
   const [feeClassFilter, setFeeClassFilter] = useState('All');
   const [studentClassFilter, setStudentClassFilter] = useState('All');
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [selectedViewStudent, setSelectedViewStudent] = useState<Student | null>(null);
   const [isViewStudentModalOpen, setIsViewStudentModalOpen] = useState(false);
+  const [isPromotionModalOpen, setIsPromotionModalOpen] = useState(false);
   const [feeStructureSearchQuery, setFeeStructureSearchQuery] = useState('');
   const [feeStructureYearFilter, setFeeStructureYearFilter] = useState('All');
+
+  const feeClassOptions = useMemo(() => {
+    const classSet = new Set<string>();
+
+    feeRecords.forEach((record) => {
+      if (record.className) {
+        classSet.add(record.className);
+      }
+    });
+
+    allStudents.forEach((student) => {
+      if (student.class) {
+        classSet.add(student.class);
+      }
+    });
+
+    return Array.from(classSet).sort((a, b) => a.localeCompare(b));
+  }, [allStudents, feeRecords]);
   
   // Backend Filter, Sorting & Pagination States
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -219,6 +279,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     receiptNo: string;
     amount: number;
     studentName: string;
+    className?: string;
+    academicYear?: string;
+    admissionNo?: string;
+    dueAmount?: number;
+    totalFee?: number;
+    paidAmount?: number;
+    paymentMethod?: string;
   } | null>(null);
 
   // Authentication Context
@@ -249,10 +316,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [feeHistory, setFeeHistory] = useState<any[]>([]);
   const [totalCollection, setTotalCollection] = useState<number>(0);
   const [totalPayments, setTotalPayments] = useState<number>(0);
-  const [historyMonth, setHistoryMonth] = useState<string>('All');
-  const [historyYear, setHistoryYear] = useState<string>('2026');
+  const [historyMonth, setHistoryMonth] = useState<string>(CURRENT_MONTH_LABEL);
+  const [historyYear, setHistoryYear] = useState<string>(CURRENT_ACADEMIC_SESSION);
   const [historyPaymentMethod, setHistoryPaymentMethod] = useState<string>('All');
-  const [historyStudentId, setHistoryStudentId] = useState<string>('');
+  const [historyClassFilter, setHistoryClassFilter] = useState<string>('All');
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<any | null>(null);
   const [isHistoryDetailModalOpen, setIsHistoryDetailModalOpen] = useState(false);
   const [studentSearchKeyword, setStudentSearchKeyword] = useState('');
@@ -282,8 +349,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     email: '',
     password: 'password123',
     admissionNo: '',
-    class: '10th',
-    section: 'A',
+    class: 'Class 10th',
     rollNo: '',
     fatherName: '',
     motherName: '',
@@ -344,7 +410,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const loadDashboardData = async () => {
       setLoading(true);
       try {
-        const [statsRes, noticeRes, activityRes, feeRes, distRes, studentsFullRes, teachersRes, feeStructuresRes] = await Promise.all([
+        const [statsRes, noticeRes, activityRes, feeRes, distRes, studentsFullRes, teachersRes, feeStructuresRes, feeLedgerRes] = await Promise.all([
           dashboardApi.getStats(),
           noticeApi.getRecentNotices(),
           dashboardApi.getActivities(),
@@ -352,7 +418,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           studentApi.getStudentDistribution(),
           studentApi.getStudents({ limit: 1000 }), // Retrieve up to 1000 students for complete general school statistics and ledgers
           teacherApi.getTeachers(),
-          feeStructureApi.getFeeStructures()
+          feeStructureApi.getFeeStructures(),
+          feeApi.getFeeLedger({ limit: 1000 })
         ]);
 
         const studentsFullList = studentsFullRes && 'students' in studentsFullRes ? studentsFullRes.students : (Array.isArray(studentsFullRes) ? studentsFullRes : []);
@@ -367,12 +434,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setFeeStructures(feeStructuresRes);
 
         // Dynamically compute fee records based on fetched live students list
-        const mappedFeeRecords = (studentsFullList || []).map((s: any) => ({
-          id: s.id,
+        const mappedFeeRecords = (feeLedgerRes.students || []).map((s: any) => ({
+          id: s.studentId,
           name: s.name,
-          className: s.section ? `${s.class}-${s.section}` : (s.class || 'General'),
+          className: s.class || s.className || 'General',
+          academicYear: s.academicYear || '',
           dueAmount: s.dueAmount != null ? s.dueAmount : 0,
-          totalFee: s.totalFee != null ? s.totalFee : 2800,
+          totalFee: s.totalFee != null ? s.totalFee : 0,
           paidAmount: s.paidAmount != null ? s.paidAmount : 0,
           status: s.status === 'Unpaid' ? 'Pending' : (s.status === 'Paid' ? 'Paid' : (s.status || 'Pending')),
           admissionNo: s.admissionNo || '',
@@ -380,7 +448,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           village: s.address?.village || '',
           paymentHistory: Array.isArray(s.paymentHistory) ? s.paymentHistory.map((ph: any) => ({
             date: ph.date || '',
-            amount: ph.amount != null ? ph.amount : 0
+            amount: ph.amount != null ? ph.amount : 0,
+            receiptNo: ph.receiptNo || '',
+            academicYear: ph.academicYear || ''
           })) : []
         }));
         setFeeRecords(mappedFeeRecords);
@@ -409,13 +479,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           params.month = historyMonth;
         }
         if (historyYear !== 'All') {
-          params.year = historyYear;
+          params.academicYear = historyYear;
         }
         if (historyPaymentMethod !== 'All') {
           params.paymentMethod = historyPaymentMethod;
         }
-        if (historyStudentId) {
-          params.studentId = historyStudentId;
+        if (historyClassFilter !== 'All') {
+          params.className = historyClassFilter;
         }
 
         const data = await feeApi.getFeeHistory(params);
@@ -428,7 +498,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
 
     fetchFeeHistory();
-  }, [historyMonth, historyYear, historyPaymentMethod, historyStudentId, refreshTrigger]);
+  }, [historyClassFilter, historyMonth, historyYear, historyPaymentMethod, refreshTrigger]);
+
+  useEffect(() => {
+    const fetchStudentFinancialHistory = async () => {
+      if (!selectedFeeStudent?.id) {
+        setStudentFinancialHistory([]);
+        setSelectedFinancialYear('');
+        setStudentFinancialHistoryError('');
+        return;
+      }
+
+      setStudentFinancialHistoryLoading(true);
+      setStudentFinancialHistoryError('');
+
+      try {
+        const history = await studentApi.getStudentFinancialHistory(selectedFeeStudent.id);
+        setStudentFinancialHistory(history || []);
+        setSelectedFinancialYear((current) => {
+          if (current && history.some((entry) => entry.academicYear === current)) {
+            return current;
+          }
+
+          return history[0]?.academicYear || selectedFeeStudent.academicYear || '';
+        });
+      } catch (error) {
+        console.error('Failed to load student financial history:', error);
+        setStudentFinancialHistory([]);
+        setSelectedFinancialYear('');
+        setStudentFinancialHistoryError('Failed to load academic year history');
+      } finally {
+        setStudentFinancialHistoryLoading(false);
+      }
+    };
+
+    fetchStudentFinancialHistory();
+  }, [selectedFeeStudent?.id, selectedFeeStudent?.academicYear, refreshTrigger]);
 
   // --- PAGINATED STUDENT DIRECTORY LOADER ---
   const loadStudents = useCallback(async () => {
@@ -441,7 +546,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         class: studentClassFilter,
         sortBy,
         order,
-        search: searchQuery
+        search: studentSearchQuery.trim()
       });
 
       if (res && 'students' in res) {
@@ -459,19 +564,85 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     } catch (err) {
       console.error('Error loading paginated students:', err);
     }
-  }, [page, limit, categoryFilter, villageFilter, studentClassFilter, sortBy, order, searchQuery]);
+  }, [page, limit, categoryFilter, villageFilter, studentClassFilter, sortBy, order, studentSearchQuery]);
 
   useEffect(() => {
     loadStudents();
   }, [loadStudents, refreshTrigger]);
 
-  // Reset page when filters change
   useEffect(() => {
     setPage(1);
-  }, [categoryFilter, villageFilter, studentClassFilter, searchQuery]);
+  }, [studentSearchQuery, categoryFilter, villageFilter, studentClassFilter]);
 
   const triggerDataRefresh = () => {
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  const promotionAcademicYears = useMemo(() => {
+    const sessions = feeStructures
+      .map((feeStructure) => feeStructure.academicYear || feeStructure.academicSession)
+      .filter(Boolean);
+
+    const currentYear = new Date().getFullYear();
+    const fallback = [
+      `${currentYear}-${String(currentYear + 1).slice(-2)}`,
+      `${currentYear + 1}-${String(currentYear + 2).slice(-2)}`
+    ];
+
+    return Array.from(new Set([...fallback, ...sessions]));
+  }, [feeStructures]);
+
+  const activeFinancialEntry = useMemo(() => {
+    if (selectedFinancialYear) {
+      return studentFinancialHistory.find((entry) => entry.academicYear === selectedFinancialYear) || null;
+    }
+
+    return studentFinancialHistory[0] || null;
+  }, [selectedFinancialYear, studentFinancialHistory]);
+
+  const paymentLedgerEntry = useMemo(() => {
+    if (!selectedFeeStudent) return null;
+
+    return {
+      ...selectedFeeStudent,
+      academicYear: activeFinancialEntry?.academicYear || selectedFeeStudent.academicYear || '',
+      className: activeFinancialEntry?.className || selectedFeeStudent.className,
+      totalFee: activeFinancialEntry?.totalFee ?? selectedFeeStudent.totalFee ?? 0,
+      paidAmount: activeFinancialEntry?.paidAmount ?? selectedFeeStudent.paidAmount ?? 0,
+      dueAmount: activeFinancialEntry?.dueAmount ?? selectedFeeStudent.dueAmount ?? 0,
+      status: activeFinancialEntry?.status || selectedFeeStudent.status
+    };
+  }, [activeFinancialEntry, selectedFeeStudent]);
+
+  const studentFinancialTimeline = useMemo(
+    () =>
+      [...studentFinancialHistory].sort(
+        (a, b) => (b.academicYear || '').localeCompare(a.academicYear || '')
+      ),
+    [studentFinancialHistory]
+  );
+
+  const selectedStudentSnapshot = useMemo(() => {
+    if (!selectedFeeStudent) return null;
+
+    return {
+      name: selectedFeeStudent.name,
+      admissionNo: selectedFeeStudent.admissionNo,
+      currentClass: selectedFeeStudent.className,
+      currentAcademicYear: selectedFeeStudent.academicYear || ''
+    };
+  }, [selectedFeeStudent]);
+
+  const handlePromotionSuccess = (result: {
+    promoted: number;
+    skipped: number;
+    alreadyExisted: number;
+    totalSelected: number;
+    promoteAllStudents: boolean;
+  }, message: string) => {
+    void result;
+    setPromotionSuccessMessage(message);
+    triggerDataRefresh();
   };
 
   const handleDashboardCollectTermFee = () => {
@@ -479,7 +650,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const activeRecord = selectedFeeStudent || feeRecords[0];
     if (activeRecord) {
       setSelectedFeeStudent(activeRecord);
-      setCustomPayAmount(activeRecord.dueAmount.toString());
+      setSelectedFinancialYear(activeFinancialEntry?.academicYear || activeRecord.academicYear || '');
+      setCustomPayAmount(String(activeFinancialEntry?.dueAmount ?? activeRecord.dueAmount ?? 0));
       setCustomPayMode('Cash');
       setCustomPayNotes('');
       setReceiptDetail(null);
@@ -495,8 +667,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       email: stu.email,
       password: 'password123',
       admissionNo: stu.admissionNo || stu.rollNumber || '',
-      class: stu.class || '10th',
-      section: stu.section || 'A',
+      class: stu.class || 'Class 10th',
       rollNo: String(stu.rollNo || ''),
       fatherName: stu.fatherName || stu.parentName || '',
       motherName: stu.motherName || '',
@@ -640,8 +811,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         email: '',
         password: 'password123',
         admissionNo: '',
-        class: '10th',
-        section: 'A',
+        class: 'Class 10th',
         rollNo: '',
         fatherName: '',
         motherName: '',
@@ -674,8 +844,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       triggerDataRefresh();
 
       if (shouldAssignTransport && studentIdForTransport) {
-        console.log(savedStudent);
-console.log(studentIdForTransport);
         setUsesTransportPresetStudentId(studentIdForTransport);
         setCurrentTab('transport');
       }
@@ -783,7 +951,7 @@ console.log(studentIdForTransport);
       computerFee: '',
       examFee: '',
       culturalActivityFee: '',
-      academicSession: '2026-27',
+      academicSession: CURRENT_ACADEMIC_SESSION,
       juneAmount: '',
       septemberAmount: '',
       decemberAmount: '',
@@ -793,7 +961,7 @@ console.log(studentIdForTransport);
   };
 
   const handleEditFeeStructureClick = (fs: FeeStructure) => {
-    setEditingFeeStructureId(fs.id);
+    setEditingFeeStructureId((fs as any)._id);;
     setFeeStructureForm({
       class: fs.class || 'Class 1',
       admissionFee: String(fs.admissionFee || ''),
@@ -801,7 +969,7 @@ console.log(studentIdForTransport);
       computerFee: String(fs.computerFee || ''),
       examFee: String(fs.examFee || ''),
       culturalActivityFee: String(fs.culturalActivityFee || ''),
-      academicSession: fs.academicSession || '2026-27',
+      academicSession: fs.academicYear || fs.academicSession || CURRENT_ACADEMIC_SESSION,
       juneAmount: String(fs.juneAmount || ''),
       septemberAmount: String(fs.septemberAmount || ''),
       decemberAmount: String(fs.decemberAmount || ''),
@@ -834,13 +1002,15 @@ console.log(studentIdForTransport);
 
     setSubmitLoading(true);
     try {
-      const payload = {
-        class: feeStructureForm.class,
-        admissionFee: Number(feeStructureForm.admissionFee) || 0,
+    const payload = {
+      class: feeStructureForm.class,
+      admissionFee: Number(feeStructureForm.admissionFee) || 0,
         tuitionFee: Number(feeStructureForm.tuitionFee) || 0,
         computerFee: Number(feeStructureForm.computerFee) || 0,
         examFee: Number(feeStructureForm.examFee) || 0,
         culturalActivityFee: Number(feeStructureForm.culturalActivityFee) || 0,
+        monthlyFee: Math.round(Number(feeStructureForm.tuitionFee) || 0),
+        academicYear: feeStructureForm.academicSession,
         academicSession: feeStructureForm.academicSession,
         juneAmount: Number(feeStructureForm.juneAmount) || 0,
         septemberAmount: Number(feeStructureForm.septemberAmount) || 0,
@@ -876,14 +1046,14 @@ console.log(studentIdForTransport);
 
   const handleExportStudentsExcel = () => {
     const headers = [
-      'ID', 'Name', 'Email', 'Admission No', 'Class', 'Section', 'Roll No', 
+      'ID', 'Name', 'Email', 'Admission No', 'Class', 'Roll No', 
       'Gender', 'Date of Birth', 'Joining Date', 'Category', 'Phone', 
       'Father Name', 'Mother Name', 'Aadhaar No', 'Samagra ID', 'APAAR ID', 'PAN No',
       'Village', 'Post Office', 'Tehsil', 'District', 'State', 'Pincode',
       'Account Holder Name', 'Bank Name', 'Account Number', 'IFSC Code', 'Branch Name'
     ];
     const keys = [
-      'id', 'name', 'email', 'admissionNo', 'class', 'section', 'rollNo',
+      'id', 'name', 'email', 'admissionNo', 'class', 'rollNo',
       'gender', 'dateOfBirth', 'joiningDate', 'category', 'phone',
       'fatherName', 'motherName', 'aadharNo', 'samagraId', 'apaarId', 'panNo',
       'village', 'postOffice', 'tehsil', 'district', 'state', 'pincode',
@@ -895,7 +1065,6 @@ console.log(studentIdForTransport);
       joiningDate: formatDate(student.joiningDate),
       admissionNo: student.admissionNo || student.rollNumber || '',
       class: student.class || 'Nursery',
-      section: student.section || 'A',
       rollNo: student.rollNo || '',
       phone: student.phone || student.contact || '',
       fatherName: student.fatherName || student.parentName || '',
@@ -919,7 +1088,6 @@ console.log(studentIdForTransport);
       case 'name': return student.name || '';
       case 'admissionNo': return student.admissionNo || '';
       case 'class': return student.class || '';
-      case 'section': return student.section || '';
       case 'rollNo': return student.rollNo != null ? String(student.rollNo) : '';
       case 'gender': return student.gender || '';
       case 'dateOfBirth': return formatDate(student.dateOfBirth);
@@ -1073,7 +1241,7 @@ console.log(studentIdForTransport);
             <div class="header-info">
               <div class="school-title">Official Student Registry Dossier</div>
               <div class="student-name">${student.name}</div>
-              <div class="student-meta">Class ${student.class || 'N/A'} ${student.section ? `- ${student.section}` : ''} | Admission No: ${student.admissionNo || 'N/A'} | Roll No: ${student.rollNo || 'N/A'}</div>
+              <div class="student-meta">Class ${student.class || 'N/A'} | Admission No: ${student.admissionNo || 'N/A'} | Roll No: ${student.rollNo || 'N/A'}</div>
             </div>
           </div>
 
@@ -1520,7 +1688,7 @@ console.log(studentIdForTransport);
       item.receiptNo || '',
       item.name || '',
       item.admissionNo || '',
-      item.className || '',
+      `${item.className || ''}`,
       `₹${(item.amount ?? 0).toLocaleString()}`,
       item.paymentMethod || '',
       formatDate(item.date)
@@ -1587,13 +1755,13 @@ console.log(studentIdForTransport);
   };
 
   const handleExportFeeStructuresExcel = () => {
-    const headers = ['ID', 'Class', 'Admission Fee', 'Tuition Fee', 'Computer Fee', 'Exam Fee', 'Cultural Activity Fee', 'Academic Session', 'Total Fee', 'June Installment', 'September Installment', 'December Installment', 'March Installment'];
-    const keys = ['id', 'class', 'admissionFee', 'tuitionFee', 'computerFee', 'examFee', 'culturalActivityFee', 'academicSession', 'totalFee', 'juneAmount', 'septemberAmount', 'decemberAmount', 'marchAmount'];
+    const headers = ['ID', 'Class', 'Section', 'Admission Fee', 'Tuition Fee', 'Computer Fee', 'Exam Fee', 'Cultural Activity Fee', 'Academic Year', 'Total Fee', 'June Installment', 'September Installment', 'December Installment', 'March Installment'];
+    const keys = ['id', 'class', 'admissionFee', 'tuitionFee', 'computerFee', 'examFee', 'culturalActivityFee', 'academicYear', 'totalFee', 'juneAmount', 'septemberAmount', 'decemberAmount', 'marchAmount'];
     exportToExcel(feeStructures, headers, keys, `Fee_Structures_${new Date().toISOString().split('T')[0]}`);
   };
 
   const handleExportFeeStructuresPDF = () => {
-    const headers = ['Class', 'Admission Fee', 'Tuition Fee', 'Computer Fee', 'Exam Fee', 'Cultural Activity Fee', 'Academic Session', 'Total Fee'];
+    const headers = ['Class', 'Section', 'Admission Fee', 'Tuition Fee', 'Computer Fee', 'Exam Fee', 'Cultural Activity Fee', 'Academic Year', 'Total Fee'];
     const rows = feeStructures.map(fs => [
       fs.class,
       `₹${fs.admissionFee}`,
@@ -1601,14 +1769,51 @@ console.log(studentIdForTransport);
       `₹${fs.computerFee}`,
       `₹${fs.examFee}`,
       `₹${fs.culturalActivityFee}`,
-      fs.academicSession,
+      fs.academicYear || fs.academicSession,
       `₹${fs.totalFee}`
     ]);
     exportToPrintablePDF('Fee Structures Report Policy Matrix', headers, rows, 'fee_structures_policy_matrix');
   };
 
   // --- FILTERED DIRECTORIES ---
-  const filteredStudents = students;
+  const filteredStudents = (Array.isArray(students) ? students : []).filter((stu) => {
+    const searchTerm = studentSearchQuery.trim().toLowerCase();
+    const studentName = (stu.name || '').toLowerCase();
+    const studentEmail = (stu.email || '').toLowerCase();
+    const studentAdmission = (stu.admissionNo || stu.rollNumber || '').toLowerCase();
+    const studentClass = (stu.class || '').toLowerCase();
+    const studentCategory = (stu.category || '').toLowerCase();
+    const studentVillage = (stu.address?.village || '').toLowerCase();
+    const studentFatherName = (stu.fatherName || '').toLowerCase();
+    const studentMotherName = (stu.motherName || '').toLowerCase();
+    const studentPhone = (stu.phone || '').toLowerCase();
+
+    const matchesSearch =
+      !searchTerm ||
+      studentName.includes(searchTerm) ||
+      studentEmail.includes(searchTerm) ||
+      studentAdmission.includes(searchTerm) ||
+      studentClass.includes(searchTerm) ||
+      studentCategory.includes(searchTerm) ||
+      studentVillage.includes(searchTerm) ||
+      studentFatherName.includes(searchTerm) ||
+      studentMotherName.includes(searchTerm) ||
+      studentPhone.includes(searchTerm);
+
+    const matchesClass =
+      studentClassFilter === 'All' ||
+      studentClass === studentClassFilter.toLowerCase();
+
+    const matchesCategory =
+      categoryFilter === 'All' ||
+      studentCategory === categoryFilter.toLowerCase();
+
+    const matchesVillage =
+      !villageFilter.trim() ||
+      studentVillage.includes(villageFilter.trim().toLowerCase());
+
+    return matchesSearch && matchesClass && matchesCategory && matchesVillage;
+  });
 
   const filteredTeachers = (Array.isArray(teachers) ? teachers : []).filter(t => 
     (t.name || '').toLowerCase().includes(query) ||
@@ -1619,11 +1824,17 @@ console.log(studentIdForTransport);
 
   const filteredFeeStructures = (Array.isArray(feeStructures) ? feeStructures : []).filter(fs => {
     const matchesSearch = !feeStructureSearchQuery || (fs.class || '').toLowerCase().includes(feeStructureSearchQuery.toLowerCase());
-    const matchesYear = feeStructureYearFilter === 'All' || fs.academicSession === feeStructureYearFilter;
+    const matchesYear = feeStructureYearFilter === 'All' || (fs.academicYear || fs.academicSession) === feeStructureYearFilter;
     return matchesSearch && matchesYear;
   });
 
-  const academicSessionOptions = Array.from(new Set((Array.isArray(feeStructures) ? feeStructures : []).map(fs => fs.academicSession))).filter(Boolean);
+  const academicSessionOptions = Array.from(
+    new Set([
+      CURRENT_ACADEMIC_SESSION,
+      PREVIOUS_ACADEMIC_SESSION,
+      ...(Array.isArray(feeStructures) ? feeStructures : []).map(fs => fs.academicYear || fs.academicSession)
+    ])
+  ).filter(Boolean);
 
   // Render Skeleton while initial loading is active
   if (loading && !stats) {
@@ -1659,9 +1870,7 @@ console.log(studentIdForTransport);
                currentTab === 'transfer-certificates' ? 'Transfer Certificates' :
                currentTab.toUpperCase() + ' panel'}
             </h1>
-            <span className="hidden sm:inline-flex items-center gap-1 text-[10px] bg-blue-50 border border-blue-200/50 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-              AY 2026-27
-            </span>
+           
           </div>
           <p className="text-xs text-slate-500 font-semibold mt-1">
             {currentTab === 'dashboard' 
@@ -1676,9 +1885,14 @@ console.log(studentIdForTransport);
 
         {/* Dynamic header button if suitable directory */}
         {currentTab === 'students' && (
-          <Button onClick={() => setIsStudentModalOpen(true)} leftIcon={<Plus size={16} />}>
-            Admit Student
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => setIsPromotionModalOpen(true)} leftIcon={<ArrowRight size={16} />}>
+              Promote Students
+            </Button>
+            <Button onClick={() => setIsStudentModalOpen(true)} leftIcon={<Plus size={16} />}>
+              Admit Student
+            </Button>
+          </div>
         )}
         {currentTab === 'teachers' && (
           <Button onClick={() => setIsTeacherModalOpen(true)} leftIcon={<Plus size={16} />}>
@@ -1805,16 +2019,21 @@ console.log(studentIdForTransport);
       {/* --- DIRECTORY TAB: STUDENTS --- */}
       {currentTab === 'students' && (
         <Card className="overflow-hidden">
+          {promotionSuccessMessage && (
+            <div className="mb-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-emerald-800 text-sm font-semibold">
+              {promotionSuccessMessage}
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-slate-100 mb-4">
             <div className="flex flex-wrap items-center gap-3 w-full lg:max-w-4xl">
               <div className="relative w-full sm:max-w-xs">
                 <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
                 <input
                   type="text"
-                  value={searchQuery}
+                  value={studentSearchQuery}
+                  onChange={(e) => setStudentSearchQuery(e.target.value)}
                   placeholder="Search registered students..."
-                  className="w-full text-xs font-semibold pl-9 pr-4 py-2 border border-slate-200 focus:border-blue-500 rounded-lg outline-hidden bg-slate-50/50"
-                  disabled
+                  className="w-full text-xs font-semibold pl-9 pr-4 py-2 border border-slate-200 focus:border-blue-500 rounded-lg outline-none bg-slate-50/50"
                 />
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -1823,7 +2042,7 @@ console.log(studentIdForTransport);
                   <select
                     value={studentClassFilter}
                     onChange={(e) => setStudentClassFilter(e.target.value)}
-                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[100px]"
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[100px]"
                   >
                     <option value="All">All Classes</option>
                     <option value="Nursery">Nursery</option>
@@ -1847,7 +2066,7 @@ console.log(studentIdForTransport);
                   <select
                     value={categoryFilter}
                     onChange={(e) => setCategoryFilter(e.target.value)}
-                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[110px]"
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[110px]"
                   >
                     <option value="All">All</option>
                     <option value="General">General</option>
@@ -1864,7 +2083,7 @@ console.log(studentIdForTransport);
                     value={villageFilter}
                     placeholder="Village Name"
                     onChange={(e) => setVillageFilter(e.target.value)}
-                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-semibold text-slate-700 focus:border-blue-500 outline-hidden w-28 placeholder:text-slate-400"
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-semibold text-slate-700 focus:border-blue-500 outline-none w-28 placeholder:text-slate-400"
                   />
                 </div>
 
@@ -1873,7 +2092,7 @@ console.log(studentIdForTransport);
                   <select
                     value={sortBy}
                     onChange={(e) => setSortBy(e.target.value)}
-                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[110px]"
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[110px]"
                   >
                     <option value="admissionNo">Admission No</option>
                     <option value="name">Student Name</option>
@@ -1959,7 +2178,7 @@ console.log(studentIdForTransport);
                           } 
                           size="sm"
                         >
-                          {stu.class || stu.classCategory || 'N/A'} {stu.section ? `- ${stu.section}` : ''}
+                          {stu.class || stu.classCategory || 'N/A'}
                         </Badge>
                       </td>
                       <td className="p-4 font-bold text-slate-700">{stu.category || 'General'}</td>
@@ -2031,7 +2250,7 @@ console.log(studentIdForTransport);
       {currentTab === 'teachers' && (
         <Card className="overflow-hidden">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-slate-100 mb-4">
-            <span className="text-xs font-semibold text-slate-505 select-none font-sans">
+            <span className="text-xs font-semibold text-slate-500 select-none font-sans">
               The School of Pansy Flowers Academic Stream & Board Officers
             </span>
             <div className="flex items-center gap-2 w-full sm:w-auto">
@@ -2088,7 +2307,7 @@ console.log(studentIdForTransport);
                       </td>
                       <td className="p-4 font-semibold text-slate-700">{t.subject}</td>
                       <td className="p-4 font-bold text-slate-400 uppercase tracking-wider">{t.department}</td>
-                      <td className="p-4 text-slate-505 font-medium">{t.contact}</td>
+                      <td className="p-4 text-slate-500 font-medium">{t.contact}</td>
                       <td className="p-4 font-semibold text-slate-500">{formatDate(t.joiningDate)}</td>
                       <td className="p-4">
                         <Badge variant={t.status === 'Active' ? 'success' : 'warning'} size="sm">
@@ -2153,7 +2372,7 @@ console.log(studentIdForTransport);
             examFee: 0,
             culturalActivityFee: 0,
             totalFee: totalFee,
-            academicSession: '2026-27',
+            academicSession: CURRENT_ACADEMIC_SESSION,
             juneAmount: parts,
             septemberAmount: parts,
             decemberAmount: parts,
@@ -2228,9 +2447,10 @@ console.log(studentIdForTransport);
         });
 
         // Trigger action to open payment dialog
-        const handleOpenPayModal = (record: typeof feeRecords[0]) => {
+        const handleOpenPayModal = (record: typeof feeRecords[0], financialYearRecord?: FinancialHistoryEntry | null) => {
           setSelectedFeeStudent(record);
-          setCustomPayAmount(record.dueAmount.toString());
+          setSelectedFinancialYear(financialYearRecord?.academicYear || record.academicYear || '');
+          setCustomPayAmount(String(financialYearRecord?.dueAmount ?? record.dueAmount ?? 0));
           setCustomPayMode('Cash');
           setCustomPayNotes('');
           setReceiptDetail(null);
@@ -2253,10 +2473,15 @@ console.log(studentIdForTransport);
 
           setSubmitLoading(true);
           try {
+            const paymentYearRecord = activeFinancialEntry || null;
+            const paymentAcademicYear = paymentYearRecord?.academicYear || activeRecord.academicYear || '';
+            const paymentClassName = paymentYearRecord?.className || activeRecord.className;
             const apiRes = await studentApi.collectFee({
               studentId: activeRecord.id,
               amountPaid: amountFloat,
-              paymentMethod: customPayMode
+              paymentMethod: customPayMode,
+              academicYear: paymentAcademicYear,
+              className: paymentClassName
             });
 
             // Synchronize with local storage fee history
@@ -2266,14 +2491,25 @@ console.log(studentIdForTransport);
             triggerDataRefresh();
 
             // Handle API receipt detail or build robust client fallback
-            const finalReceiptNo = apiRes?.receiptDetail?.receiptNo || apiRes?.receiptNo || `REC-2026-00${Math.floor(100 + Math.random() * 900)}`;
+            const fallbackReceiptYearMonth = `${new Date().getFullYear()}${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+            const finalReceiptNo =
+              apiRes?.receiptDetail?.receiptNo ||
+              apiRes?.receiptNo ||
+              `REC-${fallbackReceiptYearMonth}-${String(Math.floor(Date.now() % 100000)).padStart(5, '0')}`;
             const finalStudentName = apiRes?.receiptDetail?.studentName || apiRes?.studentName || activeRecord.name;
             const finalAmountPaid = apiRes?.receiptDetail?.amount || apiRes?.amount || amountFloat;
 
             setReceiptDetail({
               receiptNo: finalReceiptNo,
               amount: finalAmountPaid,
-              studentName: finalStudentName
+              studentName: finalStudentName,
+              className: apiRes?.receiptDetail?.className || paymentClassName || activeRecord.className,
+              academicYear: apiRes?.receiptDetail?.academicYear || paymentAcademicYear || activeRecord.academicYear,
+              admissionNo: apiRes?.receiptDetail?.admissionNo || activeRecord.admissionNo,
+              dueAmount: apiRes?.receiptDetail?.dueAmount ?? (paymentYearRecord?.dueAmount ?? activeRecord.dueAmount),
+              totalFee: apiRes?.receiptDetail?.totalFee ?? (paymentYearRecord?.totalFee ?? activeRecord.totalFee),
+              paidAmount: apiRes?.receiptDetail?.paidAmount ?? (paymentYearRecord?.paidAmount ?? activeRecord.paidAmount),
+              paymentMethod: apiRes?.receiptDetail?.paymentMethod || customPayMode
             });
 
             // Log activity event in ERP list
@@ -2300,7 +2536,7 @@ console.log(studentIdForTransport);
             {/* Main Section Header */}
             <div>
               <h2 className="text-lg font-black text-slate-800 tracking-tight">Fee Management</h2>
-              <p className="text-[11px] text-slate-450 font-semibold tracking-wide">
+              <p className="text-[11px] text-slate-500 font-semibold tracking-wide">
                 Perform student lookup, assess active tuition margins & book settlements in real time.
               </p>
             </div>
@@ -2337,7 +2573,7 @@ console.log(studentIdForTransport);
                   placeholder="Search Student..."
                   value={feeSearchQuery}
                   onChange={(e) => setFeeSearchQuery(e.target.value)}
-                  className="w-full text-xs font-semibold pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-150 rounded-lg focus:bg-white focus:border-blue-500 outline-hidden transition-all placeholder:text-slate-405 text-slate-700"
+                  className="w-full text-xs font-semibold pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:border-blue-500 outline-none transition-all placeholder:text-slate-400 text-slate-700"
                 />
               </div>
 
@@ -2346,7 +2582,7 @@ console.log(studentIdForTransport);
                   <select
                     value={feeClassFilter}
                     onChange={(e) => setFeeClassFilter(e.target.value)}
-                    className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-155 rounded-lg outline-none cursor-pointer focus:bg-white focus:border-blue-500 text-slate-700"
+                    className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer focus:bg-white focus:border-blue-500 text-slate-700"
                   >
                     <option value="All">Class: All Filter</option>
                     <option value="Nursery">Nursery</option>
@@ -2396,7 +2632,7 @@ console.log(studentIdForTransport);
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead>
-                      <tr className="bg-slate-55/40 text-slate-500 border-b border-slate-100 font-extrabold">
+                      <tr className="bg-slate-50/70 text-slate-500 border-b border-slate-100 font-extrabold">
                         <th className="p-3.5 px-5">Name</th>
                         <th className="p-3.5">Class</th>
                         <th className="p-3.5">Due Amount</th>
@@ -2420,7 +2656,7 @@ console.log(studentIdForTransport);
                               className={`cursor-pointer transition-all ${
                                 isActive 
                                   ? 'bg-blue-50/50 text-blue-900 border-l-2 border-blue-600' 
-                                  : 'hover:bg-slate-50 text-slate-658 border-l-2 border-transparent'
+                                  : 'hover:bg-slate-50 text-slate-600 border-l-2 border-transparent'
                               }`}
                             >
                               <td className="p-3.5 px-5">
@@ -2454,167 +2690,195 @@ console.log(studentIdForTransport);
                 </div>
               </Card>
 
-              {/* Right Column: Selected Student's Detailed Profile Ledger */}
+              {/* Right Column: Selected Student Ledger */}
               {activeRecord && (
-                <Card className="lg:col-span-2 p-5 bg-white border border-slate-100 rounded-xl shadow-xs space-y-6">
-                  
-                  {/* Student core metadata header */}
-                  <div className="pb-4 border-b border-slate-100">
-                    <p className="text-[10px] uppercase tracking-widest font-bold text-slate-400">Selected Ledger Details</p>
-                    <h3 className="text-lg font-black text-slate-900 mt-1">{activeRecord.name}</h3>
-                    <div className="flex flex-col gap-1 mt-3 text-xs bg-slate-50 p-3 rounded-lg border border-slate-100/50">
-                      <div className="flex justify-between">
-                        <span className="text-slate-450 font-semibold">Admission No:</span>
-                        <span className="font-extrabold text-slate-800">{activeRecord.admissionNo}</span>
+                <Card className="lg:col-span-2 p-0 bg-white border border-slate-100 rounded-xl shadow-xs overflow-hidden min-w-0">
+                  <div className="p-5 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white">
+                    <p className="text-[10px] uppercase tracking-[0.3em] font-black text-slate-400">Selected Student Ledger</p>
+                    <div className="flex items-start justify-between gap-3 mt-2">
+                      <div className="min-w-0">
+                        <h3 className="text-lg font-black text-slate-900 leading-tight truncate">{activeRecord.name}</h3>
+                        <div className="flex flex-wrap gap-2 mt-2 text-[10px] font-bold text-slate-500">
+                          <span className="px-2 py-1 rounded-full bg-white border border-slate-200">Adm {activeRecord.admissionNo}</span>
+                          <span className="px-2 py-1 rounded-full bg-white border border-slate-200">
+                            {activeFinancialEntry?.className || activeRecord.className}
+                          </span>
+                          <span className="px-2 py-1 rounded-full bg-white border border-slate-200">
+                            AY {activeFinancialEntry?.academicYear || activeRecord.academicYear || 'N/A'}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-slate-450 font-semibold">Class:</span>
-                        <span className="font-extrabold text-slate-800">{activeRecord.className}</span>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Academic Year</p>
+                      <div className="relative w-full max-w-[220px]">
+                        <select
+                          value={selectedFinancialYear || activeFinancialEntry?.academicYear || ''}
+                          onChange={(e) => setSelectedFinancialYear(e.target.value)}
+                          className="w-full appearance-none text-xs font-bold px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 text-slate-700"
+                        >
+                          {studentFinancialTimeline.map((entry) => (
+                            <option key={entry.academicYear} value={entry.academicYear}>
+                              {entry.academicYear}
+                            </option>
+                          ))}
+                        </select>
+                        <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       </div>
                     </div>
                   </div>
 
-                  {/* Section 1: Current Month billing details */}
-                  <div className="space-y-3">
-                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Current Month</h4>
-                    <div className="space-y-2 bg-slate-50/40 p-4 border border-slate-100/54 rounded-xl text-xs">
-                      <div className="flex justify-between border-b border-slate-100 pb-2">
-                        <span className="text-slate-500 font-bold">Total Fee</span>
-                        <span className="font-black text-slate-900">₹{(activeRecord.totalFee ?? 0).toLocaleString()}</span>
+                  <div className="p-5 space-y-5 min-w-0">
+                    {studentFinancialHistoryLoading ? (
+                      <div className="space-y-4 animate-pulse">
+                        <div className="h-24 rounded-2xl bg-slate-100" />
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="h-20 rounded-2xl bg-slate-100" />
+                          <div className="h-20 rounded-2xl bg-slate-100" />
+                        </div>
+                        <div className="h-44 rounded-2xl bg-slate-100" />
                       </div>
-                      <div className="flex justify-between border-b border-slate-100 py-2">
-                        <span className="text-slate-500 font-bold">Paid Amount</span>
-                        <span className="font-black text-emerald-600">₹{(activeRecord.paidAmount ?? 0).toLocaleString()}</span>
+                    ) : studentFinancialHistoryError ? (
+                      <div className="p-4 rounded-2xl border border-red-100 bg-red-50 text-xs font-semibold text-red-700">
+                        {studentFinancialHistoryError}
                       </div>
-                      <div className="flex justify-between border-b border-dash-y border-slate-100 py-2">
-                        <span className="text-slate-500 font-bold">Due Amount</span>
-                        <span className="font-black text-red-500 text-sm">₹{(activeRecord.dueAmount ?? 0).toLocaleString()}</span>
+                    ) : studentFinancialTimeline.length === 0 ? (
+                      <div className="p-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500">
+                        No archived financial years are available for this student.
                       </div>
-                      <div className="flex justify-between pt-1">
-                        <span className="text-slate-500 font-bold">Status</span>
-                        <span className="font-extrabold">
-                          <Badge 
-                            variant={
-                              activeRecord.status === 'Paid' ? 'success' :
-                              activeRecord.status === 'Partial' ? 'warning' : 'danger'
-                            }
-                            size="sm"
-                          >
-                            {activeRecord.status}
-                          </Badge>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
+                    ) : (
+                      <>
+                        {(() => {
+                          const selectedYearEntry =
+                            activeFinancialEntry ||
+                            studentFinancialTimeline.find((entry) => entry.academicYear === (selectedFinancialYear || activeRecord.academicYear)) ||
+                            studentFinancialTimeline[0] ||
+                            null;
+                          const totalFee = selectedYearEntry?.totalFee ?? activeRecord.totalFee ?? 0;
+                          const paidAmount = selectedYearEntry?.paidAmount ?? activeRecord.paidAmount ?? 0;
+                          const dueAmount = selectedYearEntry?.dueAmount ?? activeRecord.dueAmount ?? 0;
+                          const status = selectedYearEntry?.status || activeRecord.status;
+                          const className = selectedYearEntry?.className || activeRecord.className;
+                          const matchingFS = getMatchingStructureForClass(className, totalFee);
+                          const inst = getInstallmentStatuses(paidAmount, matchingFS);
 
-                  {/* Section 1.5: Student Installment Breakdown */}
-                  <div className="space-y-3">
-                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Installment Plan breakdown</h4>
-                    <div className="grid grid-cols-2 gap-2 bg-slate-50/20 p-2 border border-slate-100/50 rounded-xl">
-                      {(() => {
-                        const matchingFS = getMatchingStructureForClass(activeRecord.className || activeRecord.class, activeRecord.totalFee);
-                        const inst = getInstallmentStatuses(activeRecord.paidAmount, matchingFS);
-                        return (
-                          <>
-                            <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg flex flex-col justify-between">
-                              <span className="text-[10px] font-black text-slate-400 uppercase">June</span>
-                              <div className="flex items-center justify-between gap-1.5 mt-1.5">
-                                <span className="font-extrabold text-slate-800 text-xs">₹{(matchingFS?.juneAmount || 0).toLocaleString()}</span>
-                                <Badge variant={inst.juneStatus === 'Paid' ? 'success' : inst.juneStatus === 'Partial' ? 'warning' : 'danger'} size="xs">
-                                  {inst.juneStatus}
-                                </Badge>
-                              </div>
-                            </div>
-                            <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg flex flex-col justify-between">
-                              <span className="text-[10px] font-black text-slate-400 uppercase">Sept</span>
-                              <div className="flex items-center justify-between gap-1.5 mt-1.5">
-                                <span className="font-extrabold text-slate-800 text-xs">₹{(matchingFS?.septemberAmount || 0).toLocaleString()}</span>
-                                <Badge variant={inst.septemberStatus === 'Paid' ? 'success' : inst.septemberStatus === 'Partial' ? 'warning' : 'danger'} size="xs">
-                                  {inst.septemberStatus}
-                                </Badge>
-                              </div>
-                            </div>
-                            <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg flex flex-col justify-between">
-                              <span className="text-[10px] font-black text-slate-400 uppercase">Dec</span>
-                              <div className="flex items-center justify-between gap-1.5 mt-1.5">
-                                <span className="font-extrabold text-slate-800 text-xs">₹{(matchingFS?.decemberAmount || 0).toLocaleString()}</span>
-                                <Badge variant={inst.decemberStatus === 'Paid' ? 'success' : inst.decemberStatus === 'Partial' ? 'warning' : 'danger'} size="xs">
-                                  {inst.decemberStatus}
-                                </Badge>
-                              </div>
-                            </div>
-                            <div className="p-2 bg-slate-50 border border-slate-100 rounded-lg flex flex-col justify-between">
-                              <span className="text-[10px] font-black text-slate-400 uppercase">March</span>
-                              <div className="flex items-center justify-between gap-1.5 mt-1.5">
-                                <span className="font-extrabold text-slate-800 text-xs">₹{(matchingFS?.marchAmount || 0).toLocaleString()}</span>
-                                <Badge variant={inst.marchStatus === 'Paid' ? 'success' : inst.marchStatus === 'Partial' ? 'warning' : 'danger'} size="xs">
-                                  {inst.marchStatus}
-                                </Badge>
-                              </div>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  {/* Section 2: Settlement Payment History timeline */}
-                  <div className="space-y-3">
-                    <h4 className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Payment History</h4>
-                    <div className="space-y-2.5 max-h-40 overflow-y-auto pr-1">
-                      {(() => {
-                        const studentPayments = feeHistory.filter(h => h.studentId === activeRecord.id);
-                        const displayList = studentPayments.length > 0 ? studentPayments.map(sp => ({
-                          date: sp.date,
-                          amount: sp.amount,
-                          paymentMethod: sp.paymentMethod,
-                          receiptNo: sp.receiptNo
-                        })) : activeRecord.paymentHistory.map(ph => ({
-                          date: ph.date,
-                          amount: ph.amount,
-                          paymentMethod: (ph as any).paymentMethod || 'Cash',
-                          receiptNo: (ph as any).receiptNo || `REC-2026-${Math.floor(1000 + Math.random() * 9000)}`
-                        }));
-
-                        if (displayList.length === 0) {
                           return (
-                            <p className="text-[10px] text-slate-400 bg-slate-50 p-4 text-center rounded-lg font-semibold border border-dashed">
-                              No historical ledger payments archived.
-                            </p>
+                            <div className="space-y-5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Fee</p>
+                                  <p className="text-base font-black text-slate-900 mt-1 break-words">₹{totalFee.toLocaleString()}</p>
+                                </div>
+                                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Paid Amount</p>
+                                  <p className="text-base font-black text-emerald-700 mt-1 break-words">₹{paidAmount.toLocaleString()}</p>
+                                </div>
+                                <div className="rounded-2xl border border-red-100 bg-red-50 p-3">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Due Amount</p>
+                                  <p className="text-base font-black text-red-700 mt-1 break-words">₹{dueAmount.toLocaleString()}</p>
+                                </div>
+                                <div className="rounded-2xl border border-slate-100 bg-white p-3">
+                                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Status</p>
+                                  <div className="mt-1">
+                                    <Badge variant={status === 'Paid' ? 'success' : status === 'Partial' ? 'warning' : 'danger'} size="sm">
+                                      {status === 'Paid' ? 'Fully Paid' : status || 'Pending'}
+                                    </Badge>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Installment Plan</h4>
+                                  <span className="text-[10px] font-bold text-slate-400">June / September / December / March</span>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                  {[
+                                    ['June', matchingFS?.juneAmount || 0, inst.junePaid],
+                                    ['September', matchingFS?.septemberAmount || 0, inst.septemberPaid],
+                                    ['December', matchingFS?.decemberAmount || 0, inst.decemberPaid],
+                                    ['March', matchingFS?.marchAmount || 0, inst.marchPaid]
+                                  ].map(([label, target, paid]) => {
+                                    const remaining = Math.max(0, Number(target) - Number(paid));
+                                    const installmentStatus = Number(paid) >= Number(target) ? 'Paid' : Number(paid) > 0 ? 'Partial' : 'Pending';
+
+                                    return (
+                                      <div key={label as string} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                                        <div className="flex items-center justify-between gap-2 min-w-0">
+                                          <p className="text-[10px] font-black uppercase tracking-widest text-slate-500">{label as string}</p>
+                                          <Badge variant={installmentStatus === 'Paid' ? 'success' : installmentStatus === 'Partial' ? 'warning' : 'danger'} size="xs">
+                                            {installmentStatus}
+                                          </Badge>
+                                        </div>
+                                        <p className="mt-2 text-[11px] font-bold text-slate-600 break-words">
+                                          {installmentStatus === 'Paid'
+                                            ? `Paid ₹${Number(target).toLocaleString()}`
+                                            : installmentStatus === 'Partial'
+                                              ? `Partial ₹${Number(paid).toLocaleString()}`
+                                              : 'Pending'}
+                                        </p>
+                                        <p className="mt-1 text-[10px] text-slate-400 font-semibold">
+                                          Due ₹{remaining.toLocaleString()}
+                                        </p>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Payment History</h4>
+                                  <span className="text-[10px] font-bold text-slate-400">Frozen snapshot records</span>
+                                </div>
+                                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                  {(selectedYearEntry?.payments || []).length === 0 ? (
+                                    <p className="text-[10px] text-slate-400 bg-slate-50 p-4 text-center rounded-lg font-semibold border border-dashed">
+                                      No payment transactions archived for this year.
+                                    </p>
+                                  ) : (
+                                    selectedYearEntry?.payments.map((payment) => (
+                                      <div key={payment.receiptNo} className="flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-100 bg-slate-50 min-w-0">
+                                        <div className="min-w-0">
+                                          <p className="text-xs font-black text-slate-900">{formatDate(payment.paymentDate)}</p>
+                                          <p className="text-[10px] font-semibold text-slate-500 mt-1 break-words">
+                                            Ref {payment.receiptNo} · {payment.className} · {payment.academicYear}
+                                          </p>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                          <p className="text-xs font-black text-slate-900">₹{payment.amount.toLocaleString()}</p>
+                                          <Badge variant={payment.status === 'Paid' ? 'success' : payment.status === 'Partial' ? 'warning' : 'danger'} size="xs">
+                                            {payment.paymentMethod}
+                                          </Badge>
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="pt-1">
+                                {(dueAmount ?? 0) > 0 ? (
+                                  <Button
+                                    fullWidth
+                                    onClick={() => handleOpenPayModal(activeRecord, selectedYearEntry)}
+                                    leftIcon={<DollarSign size={15} />}
+                                  >
+                                    Collect Pending Fee
+                                  </Button>
+                                ) : (
+                                  <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 py-3 text-center text-xs font-black text-emerald-700">
+                                    ✓ Academic Year Fully Paid
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           );
-                        }
-
-                        return displayList.map((item, index) => (
-                          <div 
-                            key={index} 
-                            className="flex flex-col gap-1 text-xs p-2.5 bg-slate-50 border border-slate-100 rounded-lg hover:border-slate-200 transition-colors select-none"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-slate-500 font-bold">{formatDate(item.date)}</span>
-                              <span className="font-black text-slate-800 font-mono">₹{(item.amount ?? 0).toLocaleString()}</span>
-                            </div>
-                            <div className="flex items-center justify-between text-[9px] font-extrabold text-slate-400 uppercase tracking-wide border-t border-slate-100/50 pt-1 mt-0.5">
-                              <span>Ref: {item.receiptNo}</span>
-                              <Badge variant="warning" size="xs">{item.paymentMethod}</Badge>
-                            </div>
-                          </div>
-                        ));
-                      })()}
-                    </div>
+                        })()}
+                      </>
+                    )}
                   </div>
-
-                  {/* Operational Button */}
-                  <div className="pt-2 select-none">
-                    <Button 
-                      fullWidth 
-                      disabled={activeRecord.dueAmount <= 0}
-                      onClick={() => handleOpenPayModal(activeRecord)}
-                      leftIcon={<DollarSign size={15} />}
-                    >
-                      {activeRecord.dueAmount <= 0 ? 'Fully Settlement Completed' : 'Pay Fee'}
-                    </Button>
-                  </div>
-
                 </Card>
               )}
 
@@ -2671,7 +2935,7 @@ console.log(studentIdForTransport);
                   <select
                     value={historyMonth}
                     onChange={(e) => setHistoryMonth(e.target.value)}
-                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                   >
                     <option value="All">All Months</option>
                     <option value="January">January</option>
@@ -2695,12 +2959,12 @@ console.log(studentIdForTransport);
                   <select
                     value={historyYear}
                     onChange={(e) => setHistoryYear(e.target.value)}
-                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                   >
                     <option value="All">All Years</option>
-                    <option value="2026">2026</option>
-                    <option value="2027">2027</option>
-                    <option value="2028">2028</option>
+                    {HISTORY_YEAR_OPTIONS.map((year) => (
+                      <option key={year} value={year}>{year}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -2710,7 +2974,7 @@ console.log(studentIdForTransport);
                   <select
                     value={historyPaymentMethod}
                     onChange={(e) => setHistoryPaymentMethod(e.target.value)}
-                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                   >
                     <option value="All">All Methods</option>
                     <option value="Cash">Cash</option>
@@ -2719,18 +2983,18 @@ console.log(studentIdForTransport);
                   </select>
                 </div>
 
-                {/* 4. Student Search Selector */}
+                {/* 4. Class Selector */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Student Selector</label>
+                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Class Selector</label>
                   <select
-                    value={historyStudentId}
-                    onChange={(e) => setHistoryStudentId(e.target.value)}
-                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-150 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-2xs"
+                    value={historyClassFilter}
+                    onChange={(e) => setHistoryClassFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                   >
-                    <option value="">All Students</option>
-                    {allStudents.map(student => (
-                      <option key={student.id} value={student.id}>
-                        {student.name} ({student.class} - {student.admissionNo})
+                    <option value="All">All Classes</option>
+                    {feeClassOptions.map(className => (
+                      <option key={className} value={className}>
+                        {className}
                       </option>
                     ))}
                   </select>
@@ -2772,7 +3036,7 @@ console.log(studentIdForTransport);
                         >
                           <td className="p-3 px-4 text-blue-600 font-black">{item.receiptNo || 'N/A'}</td>
                           <td className="p-3 text-slate-900 font-extrabold">{item.name || 'N/A'}</td>
-                          <td className="p-3 text-slate-550 font-semibold">{item.admissionNo || 'N/A'}</td>
+                          <td className="p-3 text-slate-500 font-semibold">{item.admissionNo || 'N/A'}</td>
                           <td className="p-3 text-slate-500 font-medium">{item.className || 'N/A'}</td>
                           <td className="p-3 text-emerald-600 font-black">₹{(item.amount ?? 0).toLocaleString()}</td>
                           <td className="p-3">
@@ -2796,28 +3060,27 @@ console.log(studentIdForTransport);
                               
                               <button
                                 onClick={() => {
-                                  const matchingRecord = feeRecords.find(r => r.id === item.studentId);
                                   printReceiptBill({
                                     receiptNo: item.receiptNo,
                                     studentName: item.name,
                                     amount: item.amount,
                                     paymentMode: item.paymentMethod,
                                     className: item.className,
+                                    academicYear: item.academicYear,
                                     admissionNo: item.admissionNo,
-                                    dueAmountRemaining: matchingRecord ? matchingRecord.dueAmount : 0,
-                                    totalFee: matchingRecord ? matchingRecord.totalFee : item.amount,
-                                    paidAmountTotal: matchingRecord ? matchingRecord.paidAmount : item.amount
+                                    dueAmountRemaining: item.dueAmount ?? 0,
+                                    totalFee: item.paidAmount ? item.paidAmount + (item.dueAmount || 0) : item.amount,
+                                    paidAmountTotal: item.paidAmount ?? item.amount
                                   });
                                 }}
                                 title="Print Receipt Slips"
-                                className="px-2 py-1 text-[10px] font-extrabold rounded-md bg-blue-50 hover:bg-blue-100 text-blue-750 transition-colors flex items-center gap-1 select-none active:scale-95 cursor-pointer"
+                                className="px-2 py-1 text-[10px] font-extrabold rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors flex items-center gap-1 select-none active:scale-95 cursor-pointer"
                               >
                                 <span>🖨</span> <span>Print</span>
                               </button>
 
                               <button
                                 onClick={() => {
-                                  const matchingRecord = feeRecords.find(r => r.id === item.studentId);
                                   const content = `
 =============================================
              ACADEMIC FEE RECEIPT
@@ -2826,11 +3089,12 @@ Receipt Number : ${item.receiptNo}
 Student Name   : ${item.name}
 Admission No   : ${item.admissionNo}
 Class          : ${item.className}
+Academic Year  : ${item.academicYear || 'N/A'}
 =============================================
 Settled Amount : ₹${item.amount.toLocaleString()}
 Payment Method : ${item.paymentMethod}
 Payment Date   : ${formatDate(item.date)}
-Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleString()}
+Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
 =============================================
          Thank you for your payment!
 =============================================
@@ -2842,7 +3106,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                                   link.click();
                                 }}
                                 title="Download Receipt"
-                                className="px-2 py-1 text-[10px] font-extrabold rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-750 transition-colors flex items-center gap-1 select-none active:scale-95 cursor-pointer"
+                                className="px-2 py-1 text-[10px] font-extrabold rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors flex items-center gap-1 select-none active:scale-95 cursor-pointer"
                               >
                                 <span>⬇</span> <span>Download</span>
                               </button>
@@ -2862,234 +3126,255 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
               <Modal
                 isOpen={isCustomPayModalOpen}
                 onClose={() => setIsCustomPayModalOpen(false)}
-                title={receiptDetail ? "Transaction successful" : "Pay Fee"}
+                title={receiptDetail ? 'Transaction successful' : 'Pay Fee'}
+                size="xl"
                 footer={null}
               >
-                {!receiptDetail ? (
-                  /* STEP 1: FILL FORM INFORMATION */
-                  <form onSubmit={handleSavePaymentSubmit} className="space-y-4 animate-fadeIn">
-                    
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-slate-400">Student</p>
-                      <p className="text-sm font-extrabold text-slate-900 mt-0.5">{activeRecord.name}</p>
-                    </div>
-
-                    <div>
-                      <p className="text-[10px] uppercase font-bold text-slate-400">Current Due</p>
-                      <p className="text-sm font-black text-red-500 mt-0.5">₹{(activeRecord?.dueAmount ?? 0).toLocaleString()}</p>
-                    </div>
-
-                    {/* Quick Installment Select Buttons */}
-                    {(() => {
-                      const matchingFS = getMatchingStructureForClass(activeRecord.className || activeRecord.class, activeRecord.totalFee);
-                      const inst = getInstallmentStatuses(activeRecord.paidAmount, matchingFS);
-                      
-                      const juneRemaining = Math.max(0, (matchingFS?.juneAmount || 0) - inst.junePaid);
-                      const septemberRemaining = Math.max(0, (matchingFS?.septemberAmount || 0) - inst.septemberPaid);
-                      const decemberRemaining = Math.max(0, (matchingFS?.decemberAmount || 0) - inst.decemberPaid);
-                      const marchRemaining = Math.max(0, (matchingFS?.marchAmount || 0) - inst.marchPaid);
-
-                      const hasDueInstallments = juneRemaining > 0 || septemberRemaining > 0 || decemberRemaining > 0 || marchRemaining > 0;
-
-                      if (!hasDueInstallments) return null;
-
-                      return (
-                        <div className="space-y-1.5 p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                          <label className="text-[9px] font-black tracking-wider text-slate-400 uppercase">Installment Quick Select</label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            {juneRemaining > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setCustomPayAmount(juneRemaining.toString())}
-                                className="text-left p-2 bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-97 cursor-pointer"
-                              >
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">June Term</span>
-                                <span className="text-xs font-black text-blue-600 mt-0.5">₹{juneRemaining.toLocaleString()}</span>
-                              </button>
-                            )}
-                            {septemberRemaining > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setCustomPayAmount(septemberRemaining.toString())}
-                                className="text-left p-2 bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-97 cursor-pointer"
-                              >
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">Sept Term</span>
-                                <span className="text-xs font-black text-indigo-600 mt-0.5">₹{septemberRemaining.toLocaleString()}</span>
-                              </button>
-                            )}
-                            {decemberRemaining > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setCustomPayAmount(decemberRemaining.toString())}
-                                className="text-left p-2 bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-97 cursor-pointer"
-                              >
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">Dec Term</span>
-                                <span className="text-xs font-black text-purple-600 mt-0.5">₹{decemberRemaining.toLocaleString()}</span>
-                              </button>
-                            )}
-                            {marchRemaining > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => setCustomPayAmount(marchRemaining.toString())}
-                                className="text-left p-2 bg-white border border-slate-200 hover:border-pink-300 hover:bg-pink-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-97 cursor-pointer"
-                              >
-                                <span className="text-[9px] font-bold text-slate-400 uppercase">March Term</span>
-                                <span className="text-xs font-black text-pink-600 mt-0.5">₹{marchRemaining.toLocaleString()}</span>
-                              </button>
-                            )}
+                {(() => {
+                  const paymentTarget = paymentLedgerEntry || activeRecord;
+                  const paymentYear = selectedFinancialYear || paymentTarget?.academicYear || '';
+                  const selectedYearEntry =
+                    studentFinancialTimeline.find((entry) => entry.academicYear === paymentYear) ||
+                    activeFinancialEntry ||
+                    null;
+                  const dueAmount = selectedYearEntry?.dueAmount ?? paymentTarget?.dueAmount ?? 0;
+                  const paidAmount = selectedYearEntry?.paidAmount ?? paymentTarget?.paidAmount ?? 0;
+                  const totalFee = selectedYearEntry?.totalFee ?? paymentTarget?.totalFee ?? 0;
+                  const selectedClassName = selectedYearEntry?.className || paymentTarget?.className || '';
+                  if (!receiptDetail) {
+                    return (
+                      <form onSubmit={handleSavePaymentSubmit} className="space-y-4 animate-fadeIn">
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3 min-w-0">
+                          <p className="text-[10px] uppercase font-black tracking-widest text-slate-400">Student</p>
+                          <p className="mt-1 text-sm font-black text-slate-900 truncate">{paymentTarget?.name}</p>
+                          <p className="text-[11px] font-semibold text-slate-500 mt-1">
+                            Adm {paymentTarget?.admissionNo || 'N/A'} · {selectedClassName}
+                          </p>
+                          <div className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500">
+                            Academic Year: <span className="ml-1 text-slate-900">{paymentYear || 'N/A'}</span>
                           </div>
-                          
-                          <button
-                            type="button"
-                            onClick={() => setCustomPayAmount(activeRecord.dueAmount.toString())}
-                            className="w-full text-center mt-1.5 p-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-lg text-[10px] uppercase tracking-wider transition-all cursor-pointer"
-                          >
-                            Select Full Outstanding (₹{activeRecord.dueAmount.toLocaleString()})
-                          </button>
                         </div>
-                      );
-                    })()}
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Amount Paid</label>
-                      <input
-                        type="number"
-                        required
-                        value={customPayAmount}
-                        onChange={(e) => setCustomPayAmount(e.target.value)}
-                        placeholder="Enter amount to pay"
-                        max={activeRecord.dueAmount}
-                        min="1"
-                        className="w-full text-xs font-bold px-3 py-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500 transition-colors"
-                      />
-                    </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Total Fee</p>
+                            <p className="mt-1 text-sm font-black text-slate-900">₹{(totalFee || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-emerald-500">Paid</p>
+                            <p className="mt-1 text-sm font-black text-emerald-700">₹{(paidAmount || 0).toLocaleString()}</p>
+                          </div>
+                          <div className="rounded-2xl border border-red-100 bg-red-50 p-3">
+                            <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Due</p>
+                            <p className="mt-1 text-sm font-black text-red-700">₹{(dueAmount || 0).toLocaleString()}</p>
+                          </div>
+                        </div>
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Payment Mode</label>
-                      <select
-                        value={customPayMode}
-                        onChange={(e) => setCustomPayMode(e.target.value as any)}
-                        className="w-full text-xs font-bold px-3 py-2.5 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700"
-                      >
-                        <option value="Cash">Cash</option>
-                        <option value="UPI">UPI</option>
-                        <option value="Bank Transfer">Bank Transfer</option>
-                      </select>
-                    </div>
+                        {(() => {
+                          const matchingFS = getMatchingStructureForClass(selectedClassName, totalFee);
+                          const inst = getInstallmentStatuses(paidAmount, matchingFS);
 
-                    <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold text-slate-400 uppercase">Notes</label>
-                      <input
-                        type="text"
-                        value={customPayNotes}
-                        onChange={(e) => setCustomPayNotes(e.target.value)}
-                        placeholder="Any payment references or check numbers"
-                        className="w-full text-xs font-medium px-3 py-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500 transition-colors"
-                      />
-                    </div>
+                          const juneRemaining = Math.max(0, (matchingFS?.juneAmount || 0) - inst.junePaid);
+                          const septemberRemaining = Math.max(0, (matchingFS?.septemberAmount || 0) - inst.septemberPaid);
+                          const decemberRemaining = Math.max(0, (matchingFS?.decemberAmount || 0) - inst.decemberPaid);
+                          const marchRemaining = Math.max(0, (matchingFS?.marchAmount || 0) - inst.marchPaid);
 
-                    <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
-                      <Button variant="outline" size="sm" type="button" onClick={() => setIsCustomPayModalOpen(false)}>
-                        Cancel
-                      </Button>
-                      <Button size="sm" type="submit">
-                        Save Payment
-                      </Button>
-                    </div>
+                          const hasDueInstallments = juneRemaining > 0 || septemberRemaining > 0 || decemberRemaining > 0 || marchRemaining > 0;
+                          if (!hasDueInstallments) return null;
 
-                  </form>
-                ) : (
-                  /* STEP 2: PAYMENT SUCCESSFUL RECEIPT PANEL */
-                  <div className="space-y-6 text-center py-4 animate-fadeIn select-none">
-                    
-                    {/* Circle Success Icons */}
-                    <div className="mx-auto h-12 w-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
-                      <CheckCircle size={22} className="animate-pulse" />
-                    </div>
+                          return (
+                            <div className="space-y-1.5 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                              <label className="text-[9px] font-black tracking-wider text-slate-400 uppercase">Installment Quick Select</label>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {juneRemaining > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCustomPayAmount(juneRemaining.toString())}
+                                    className="text-left p-2 bg-white border border-slate-200 hover:border-blue-300 hover:bg-blue-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-[0.97] cursor-pointer min-w-0"
+                                  >
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase">June Term</span>
+                                    <span className="text-xs font-black text-blue-600 mt-0.5">₹{juneRemaining.toLocaleString()}</span>
+                                  </button>
+                                )}
+                                {septemberRemaining > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCustomPayAmount(septemberRemaining.toString())}
+                                    className="text-left p-2 bg-white border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-[0.97] cursor-pointer min-w-0"
+                                  >
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase">Sept Term</span>
+                                    <span className="text-xs font-black text-indigo-600 mt-0.5">₹{septemberRemaining.toLocaleString()}</span>
+                                  </button>
+                                )}
+                                {decemberRemaining > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCustomPayAmount(decemberRemaining.toString())}
+                                    className="text-left p-2 bg-white border border-slate-200 hover:border-purple-300 hover:bg-purple-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-[0.97] cursor-pointer min-w-0"
+                                  >
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase">Dec Term</span>
+                                    <span className="text-xs font-black text-purple-600 mt-0.5">₹{decemberRemaining.toLocaleString()}</span>
+                                  </button>
+                                )}
+                                {marchRemaining > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCustomPayAmount(marchRemaining.toString())}
+                                    className="text-left p-2 bg-white border border-slate-200 hover:border-pink-300 hover:bg-pink-50/20 rounded-lg flex flex-col justify-between transition-all active:scale-[0.97] cursor-pointer min-w-0"
+                                  >
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase">March Term</span>
+                                    <span className="text-xs font-black text-pink-600 mt-0.5">₹{marchRemaining.toLocaleString()}</span>
+                                  </button>
+                                )}
+                              </div>
 
-                    <div className="space-y-1">
-                      <h4 className="text-base font-black text-slate-900">Payment Successful</h4>
-                      <p className="text-[11px] text-slate-400 font-semibold">
-                        Your transaction reference has been verified and settled in ledger!
-                      </p>
-                    </div>
+                              <button
+                                type="button"
+                                onClick={() => setCustomPayAmount(String(dueAmount || 0))}
+                                className="w-full text-center mt-1.5 p-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-lg text-[10px] uppercase tracking-wider transition-all cursor-pointer"
+                              >
+                                Select Full Outstanding (₹{(dueAmount || 0).toLocaleString()})
+                              </button>
+                            </div>
+                          );
+                        })()}
 
-                    {/* Receipt visual paper box */}
-                    <div className="bg-slate-50 p-4 border border-slate-150 rounded-xl space-y-3.5 text-xs text-left max-w-sm mx-auto shadow-inner">
-                      
-                      <div className="flex justify-between border-b border-slate-150 pb-2">
-                        <span className="text-slate-400 font-semibold">Receipt No:</span>
-                        <span className="font-extrabold font-mono text-slate-800">{receiptDetail.receiptNo}</span>
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Amount Paid</label>
+                          <input
+                            type="number"
+                            required
+                            value={customPayAmount}
+                            onChange={(e) => setCustomPayAmount(e.target.value)}
+                            placeholder="Enter amount to pay"
+                            max={dueAmount}
+                            min="1"
+                            className="w-full text-xs font-bold px-3 py-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500 transition-colors"
+                          />
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Payment Mode</label>
+                          <select
+                            value={customPayMode}
+                            onChange={(e) => setCustomPayMode(e.target.value as any)}
+                            className="w-full text-xs font-bold px-3 py-2.5 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700"
+                          >
+                            <option value="Cash">Cash</option>
+                            <option value="UPI">UPI</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1.5">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase">Notes</label>
+                          <input
+                            type="text"
+                            value={customPayNotes}
+                            onChange={(e) => setCustomPayNotes(e.target.value)}
+                            placeholder="Any payment references or check numbers"
+                            className="w-full text-xs font-medium px-3 py-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500 transition-colors"
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2 pt-4 border-t border-slate-100">
+                          <Button variant="outline" size="sm" type="button" onClick={() => setIsCustomPayModalOpen(false)}>
+                            Cancel
+                          </Button>
+                          <Button size="sm" type="submit">
+                            Save Payment
+                          </Button>
+                        </div>
+                      </form>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-6 text-center py-4 animate-fadeIn select-none">
+                      <div className="mx-auto h-12 w-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+                        <CheckCircle size={22} className="animate-pulse" />
                       </div>
 
-                      <div className="flex justify-between border-b border-slate-150 pb-2">
-                        <span className="text-slate-400 font-semibold">Student Name:</span>
-                        <span className="font-extrabold text-slate-800">{receiptDetail.studentName}</span>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-black text-slate-900">Payment Successful</h4>
+                        <p className="text-[11px] text-slate-400 font-semibold">
+                          Your transaction reference has been verified and settled in ledger!
+                        </p>
                       </div>
 
-                      <div className="flex justify-between pt-1">
-                        <span className="text-slate-400 font-semibold">Amount Paid:</span>
-                        <span className="font-black text-emerald-600 text-sm">₹{(receiptDetail?.amount ?? 0).toLocaleString()}</span>
+                      <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl space-y-3.5 text-xs text-left max-w-sm mx-auto shadow-inner">
+                        <div className="flex justify-between border-b border-slate-200 pb-2 gap-3">
+                          <span className="text-slate-400 font-semibold">Receipt No:</span>
+                          <span className="font-extrabold font-mono text-slate-800 text-right break-words">{receiptDetail.receiptNo}</span>
+                        </div>
+
+                        <div className="flex justify-between border-b border-slate-200 pb-2 gap-3">
+                          <span className="text-slate-400 font-semibold">Student Name:</span>
+                          <span className="font-extrabold text-slate-800 text-right break-words">{receiptDetail.studentName}</span>
+                        </div>
+
+                        <div className="flex justify-between pt-1 gap-3">
+                          <span className="text-slate-400 font-semibold">Amount Paid:</span>
+                          <span className="font-black text-emerald-600 text-sm text-right">₹{(receiptDetail?.amount ?? 0).toLocaleString()}</span>
+                        </div>
                       </div>
 
-                    </div>
+                      <div className="flex flex-col sm:flex-row gap-2 max-w-sm mx-auto pt-4 border-t border-slate-100">
+                        <button
+                          onClick={() => {
+                            printReceiptBill({
+                              receiptNo: receiptDetail.receiptNo,
+                              studentName: receiptDetail.studentName,
+                              amount: receiptDetail.amount,
+                              paymentMode: receiptDetail.paymentMethod || customPayMode,
+                              className: `${receiptDetail.className || paymentTarget?.className || ''}`,
+                              admissionNo: receiptDetail.admissionNo || paymentTarget?.admissionNo || '',
+                              academicYear: receiptDetail.academicYear,
+                              dueAmountRemaining: receiptDetail.dueAmount ?? paymentTarget?.dueAmount ?? 0,
+                              totalFee: receiptDetail.totalFee ?? paymentTarget?.totalFee ?? 0,
+                              paidAmountTotal: receiptDetail.paidAmount ?? paymentTarget?.paidAmount ?? 0,
+                              category: paymentTarget?.category,
+                              village: paymentTarget?.village
+                            });
+                          }}
+                          className="flex-1 py-2 border rounded-lg text-xs font-bold font-sans text-slate-700 bg-white hover:bg-slate-50 border-slate-200 transition-all shadow-sm active:scale-[0.98] cursor-pointer"
+                        >
+                          Download / Save PDF
+                        </button>
+                        <button
+                          onClick={() => {
+                            printReceiptBill({
+                              receiptNo: receiptDetail.receiptNo,
+                              studentName: receiptDetail.studentName,
+                              amount: receiptDetail.amount,
+                              paymentMode: receiptDetail.paymentMethod || customPayMode,
+                              className: `${receiptDetail.className || paymentTarget?.className || ''}`,
+                              admissionNo: receiptDetail.admissionNo || paymentTarget?.admissionNo || '',
+                              academicYear: receiptDetail.academicYear,
+                              dueAmountRemaining: receiptDetail.dueAmount ?? paymentTarget?.dueAmount ?? 0,
+                              totalFee: receiptDetail.totalFee ?? paymentTarget?.totalFee ?? 0,
+                              paidAmountTotal: receiptDetail.paidAmount ?? paymentTarget?.paidAmount ?? 0,
+                              category: paymentTarget?.category,
+                              village: paymentTarget?.village
+                            });
+                          }}
+                          className="flex-1 py-2 border rounded-lg text-xs font-bold font-sans text-slate-700 bg-indigo-50 border-indigo-100 hover:bg-indigo-100 text-indigo-700 transition-all shadow-sm active:scale-[0.98] cursor-pointer"
+                        >
+                          Print Receipt
+                        </button>
+                      </div>
 
-                    {/* Printer and downloader action wrappers */}
-                    <div className="flex flex-col sm:flex-row gap-2 max-w-sm mx-auto pt-4 border-t border-slate-100">
-                      <button
-                        onClick={() => {
-                          printReceiptBill({
-                            receiptNo: receiptDetail.receiptNo,
-                            studentName: receiptDetail.studentName,
-                            amount: receiptDetail.amount,
-                            paymentMode: customPayMode,
-                            className: activeRecord.className,
-                            admissionNo: activeRecord.admissionNo,
-                            dueAmountRemaining: activeRecord.dueAmount,
-                            totalFee: activeRecord.totalFee,
-                            paidAmountTotal: activeRecord.paidAmount,
-                            category: activeRecord.category,
-                            village: activeRecord.village
-                          });
-                        }}
-                        className="flex-1 py-2 border rounded-lg text-xs font-bold font-sans text-slate-700 bg-white hover:bg-slate-50 border-slate-200 transition-all shadow-xs active:scale-98 cursor-pointer"
-                      >
-                        Download / Save PDF
-                      </button>
-                      <button
-                        onClick={() => {
-                          printReceiptBill({
-                            receiptNo: receiptDetail.receiptNo,
-                            studentName: receiptDetail.studentName,
-                            amount: receiptDetail.amount,
-                            paymentMode: customPayMode,
-                            className: activeRecord.className,
-                            admissionNo: activeRecord.admissionNo,
-                            dueAmountRemaining: activeRecord.dueAmount,
-                            totalFee: activeRecord.totalFee,
-                            paidAmountTotal: activeRecord.paidAmount,
-                            category: activeRecord.category,
-                            village: activeRecord.village
-                          });
-                        }}
-                        className="flex-1 py-2 border rounded-lg text-xs font-bold font-sans text-slate-755 bg-indigo-50 border-indigo-100 hover:bg-indigo-100 text-indigo-700 transition-all shadow-xs active:scale-98 cursor-pointer"
-                      >
-                        Print Receipt
-                      </button>
+                      <div className="pt-2">
+                        <button
+                          onClick={() => setIsCustomPayModalOpen(false)}
+                          className="w-full text-xs font-extrabold text-white py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-900 transition-colors active:scale-95"
+                        >
+                          Done & Close
+                        </button>
+                      </div>
                     </div>
-
-                    {/* Done dismiss control button */}
-                    <div className="pt-2">
-                      <button
-                        onClick={() => setIsCustomPayModalOpen(false)}
-                        className="w-full text-xs font-extrabold text-white py-2 px-4 rounded-lg bg-slate-800 hover:bg-slate-900 transition-colors active:scale-95"
-                      >
-                        Done & Close
-                      </button>
-                    </div>
-
-                  </div>
-                )}
+                  );
+                })()}
               </Modal>
             )}
 
@@ -3135,7 +3420,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                         return studentPayments.map((pay, index) => (
                           <div 
                             key={index} 
-                            className="bg-white border border-slate-150 p-3.5 rounded-xl shadow-2xs space-y-2 flex flex-col justify-between"
+                            className="bg-white border border-slate-200 p-3.5 rounded-xl shadow-sm space-y-2 flex flex-col justify-between"
                           >
                             <div className="flex justify-between items-start">
                               <div>
@@ -3148,17 +3433,17 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                               <span>Method: {pay.paymentMethod}</span>
                               <button
                                 onClick={() => {
-                                  const matchingRecord = feeRecords.find(r => r.id === pay.studentId);
                                   printReceiptBill({
                                     receiptNo: pay.receiptNo,
                                     studentName: pay.name,
                                     amount: pay.amount,
                                     paymentMode: pay.paymentMethod,
                                     className: pay.className,
+                                    academicYear: pay.academicYear,
                                     admissionNo: pay.admissionNo,
-                                    dueAmountRemaining: matchingRecord ? matchingRecord.dueAmount : 0,
-                                    totalFee: matchingRecord ? matchingRecord.totalFee : pay.amount,
-                                    paidAmountTotal: matchingRecord ? matchingRecord.paidAmount : pay.amount
+                                    dueAmountRemaining: pay.dueAmount ?? 0,
+                                    totalFee: pay.paidAmount ? pay.paidAmount + (pay.dueAmount || 0) : pay.amount,
+                                    paidAmountTotal: pay.paidAmount ?? pay.amount
                                   });
                                 }}
                                 className="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
@@ -3207,7 +3492,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                       value={feeStructureSearchQuery}
                       onChange={(e) => setFeeStructureSearchQuery(e.target.value)}
                       placeholder="Search class (e.g. Class 1)..."
-                      className="w-full text-xs font-semibold pl-9 pr-4 py-2 border border-slate-200 focus:border-blue-500 rounded-lg outline-hidden"
+                      className="w-full text-xs font-semibold pl-9 pr-4 py-2 border border-slate-200 focus:border-blue-500 rounded-lg outline-none"
                     />
                   </div>
                   {/* Year Filter */}
@@ -3216,12 +3501,12 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                     <select
                       value={feeStructureYearFilter}
                       onChange={(e) => setFeeStructureYearFilter(e.target.value)}
-                      className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[110px]"
+                      className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[110px]"
                     >
                       <option value="All">All Years</option>
-                      <option value="2026-27">2026-27</option>
-                      <option value="2025-26">2025-26</option>
-                      {academicSessionOptions.filter(y => y !== '2026-27' && y !== '2025-26').map(y => (
+                      <option value={CURRENT_ACADEMIC_SESSION}>{CURRENT_ACADEMIC_SESSION}</option>
+                      <option value={PREVIOUS_ACADEMIC_SESSION}>{PREVIOUS_ACADEMIC_SESSION}</option>
+                      {academicSessionOptions.filter(y => y !== CURRENT_ACADEMIC_SESSION && y !== PREVIOUS_ACADEMIC_SESSION).map(y => (
                         <option key={y} value={y}>{y}</option>
                       ))}
                     </select>
@@ -3232,13 +3517,13 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 <div className="flex items-center gap-2">
                   <button
                     onClick={handleExportFeeStructuresExcel}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-755 hover:bg-emerald-100 border border-emerald-200/60 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer text-emerald-700"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/60 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     <Download size={14} /> <span className="hidden sm:inline">Export Excel</span>
                   </button>
                   <button
                     onClick={handleExportFeeStructuresPDF}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-755 hover:bg-blue-100 border border-blue-200/60 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer text-blue-700"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200/60 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
                   >
                     <FileText size={14} /> <span className="hidden sm:inline">Export PDF</span>
                   </button>
@@ -3311,7 +3596,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                                   <Edit2 size={13} />
                                 </button>
                                 <button
-                                  onClick={() => handleDeleteFeeStructureClick(fs.id)}
+                                  onClick={() => handleDeleteFeeStructureClick(fs._id)}
                                   className="p-1 px-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                                   title="Delete Policy"
                                 >
@@ -3340,7 +3625,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] font-black tracking-widest text-slate-400 uppercase">Selected Structure</span>
                         <span className="text-xs bg-blue-600 px-2.5 py-0.5 rounded-full font-black text-white text-[9px] uppercase tracking-wide">
-                          {displayStructure.academicSession}
+                          {displayStructure.academicYear || displayStructure.academicSession}
                         </span>
                       </div>
                       <h3 className="text-lg font-black mt-1 font-sans">{displayStructure.class}</h3>
@@ -3388,7 +3673,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                               <span className="text-xs font-bold text-slate-800">June</span>
                             </div>
                             <div className="flex items-center gap-2 font-mono">
-                              <span className="text-xs font-black text-slate-905">₹{(displayStructure.juneAmount || 0).toLocaleString()}</span>
+                              <span className="text-xs font-black text-slate-900">₹{(displayStructure.juneAmount || 0).toLocaleString()}</span>
                               <Badge variant={displayStructure.juneStatus === 'Paid' ? 'success' : 'warning'} size="sm">
                                 {displayStructure.juneStatus || 'Pending'}
                               </Badge>
@@ -3401,7 +3686,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                               <span className="text-xs font-bold text-slate-800">September</span>
                             </div>
                             <div className="flex items-center gap-2 font-mono">
-                              <span className="text-xs font-black text-slate-905">₹{(displayStructure.septemberAmount || 0).toLocaleString()}</span>
+                              <span className="text-xs font-black text-slate-900">₹{(displayStructure.septemberAmount || 0).toLocaleString()}</span>
                               <Badge variant={displayStructure.septemberStatus === 'Paid' ? 'success' : 'warning'} size="sm">
                                 {displayStructure.septemberStatus || 'Pending'}
                               </Badge>
@@ -3414,7 +3699,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                               <span className="text-xs font-bold text-slate-800">December</span>
                             </div>
                             <div className="flex items-center gap-2 font-mono">
-                              <span className="text-xs font-black text-slate-905">₹{(displayStructure.decemberAmount || 0).toLocaleString()}</span>
+                              <span className="text-xs font-black text-slate-900">₹{(displayStructure.decemberAmount || 0).toLocaleString()}</span>
                               <Badge variant={displayStructure.decemberStatus === 'Paid' ? 'success' : 'warning'} size="sm">
                                 {displayStructure.decemberStatus || 'Pending'}
                               </Badge>
@@ -3427,7 +3712,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                               <span className="text-xs font-bold text-slate-800">March</span>
                             </div>
                             <div className="flex items-center gap-2 font-mono">
-                              <span className="text-xs font-black text-slate-905">₹{(displayStructure.marchAmount || 0).toLocaleString()}</span>
+                              <span className="text-xs font-black text-slate-900">₹{(displayStructure.marchAmount || 0).toLocaleString()}</span>
                               <Badge variant={displayStructure.marchStatus === 'Paid' ? 'success' : 'warning'} size="sm">
                                 {displayStructure.marchStatus || 'Pending'}
                               </Badge>
@@ -3444,7 +3729,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                   <div className="p-3 bg-slate-100 text-slate-400 rounded-full mb-2">
                     <Eye size={18} />
                   </div>
-                  <p className="text-xs font-bold text-slate-450">Select any class structure from the ledger to view the installment plan breakups.</p>
+                  <p className="text-xs font-bold text-slate-500">Select any class structure from the ledger to view the installment plan breakups.</p>
                 </div>
               );
             })()}
@@ -3614,7 +3899,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
               />
               <div>
                 <span className="text-[10px] bg-blue-100 border border-blue-200 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-                  {selectedViewStudent.class || 'N/A'} {selectedViewStudent.section ? `- ${selectedViewStudent.section}` : ''}
+                  {selectedViewStudent.class || 'N/A'}
                 </span>
                 <h3 className="text-lg font-black text-slate-900 mt-1">{selectedViewStudent.name}</h3>
                 <p className="text-xs text-slate-500 font-medium">{selectedViewStudent.email}</p>
@@ -3628,27 +3913,27 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 <h5 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1.5">Demographics & Academic</h5>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Gender:</span>
+                    <span className="text-slate-500 font-bold">Gender:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.gender || 'Male'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Date of Birth:</span>
+                    <span className="text-slate-500 font-bold">Date of Birth:</span>
                     <span className="font-extrabold text-slate-800">{formatDate(selectedViewStudent.dateOfBirth)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Joining Date:</span>
+                    <span className="text-slate-500 font-bold">Joining Date:</span>
                     <span className="font-extrabold text-slate-800">{formatDate(selectedViewStudent.joiningDate)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Admission No:</span>
+                    <span className="text-slate-500 font-bold">Admission No:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.admissionNo || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Roll Number:</span>
+                    <span className="text-slate-500 font-bold">Roll Number:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.rollNo || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Category:</span>
+                    <span className="text-slate-500 font-bold">Category:</span>
                     <span className="font-extrabold text-blue-700">{selectedViewStudent.category || 'General'}</span>
                   </div>
                 </div>
@@ -3659,19 +3944,19 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 <h5 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1.5">Government IDs</h5>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Aadhaar No:</span>
+                    <span className="text-slate-500 font-bold">Aadhaar No:</span>
                     <span className="font-extrabold text-slate-800 font-mono">{selectedViewStudent.aadharNo || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Samagra ID:</span>
+                    <span className="text-slate-500 font-bold">Samagra ID:</span>
                     <span className="font-extrabold text-slate-800 font-mono">{selectedViewStudent.samagraId || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">APAAR ID:</span>
+                    <span className="text-slate-500 font-bold">APAAR ID:</span>
                     <span className="font-extrabold text-slate-800 font-mono">{selectedViewStudent.apaarId || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">PAN No:</span>
+                    <span className="text-slate-500 font-bold">PAN No:</span>
                     <span className="font-extrabold text-slate-800 font-mono">{selectedViewStudent.panNo || 'N/A'}</span>
                   </div>
                 </div>
@@ -3682,15 +3967,15 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 <h5 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1.5">Family & Contact</h5>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Father's Name:</span>
+                    <span className="text-slate-500 font-bold">Father's Name:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.fatherName || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Mother's Name:</span>
+                    <span className="text-slate-500 font-bold">Mother's Name:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.motherName || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Phone No:</span>
+                    <span className="text-slate-500 font-bold">Phone No:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.phone || 'N/A'}</span>
                   </div>
                 </div>
@@ -3701,27 +3986,27 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 <h5 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest border-b border-slate-50 pb-1.5">Address Details</h5>
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Village:</span>
+                    <span className="text-slate-500 font-bold">Village:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.address?.village || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Post Office:</span>
+                    <span className="text-slate-500 font-bold">Post Office:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.address?.postOffice || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Tehsil:</span>
+                    <span className="text-slate-500 font-bold">Tehsil:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.address?.tehsil || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">District:</span>
+                    <span className="text-slate-500 font-bold">District:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.address?.district || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">State:</span>
+                    <span className="text-slate-500 font-bold">State:</span>
                     <span className="font-extrabold text-slate-800">{selectedViewStudent.address?.state || 'N/A'}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-slate-450 font-bold">Pincode:</span>
+                    <span className="text-slate-500 font-bold">Pincode:</span>
                     <span className="font-extrabold text-slate-800 font-mono">{selectedViewStudent.address?.pincode || 'N/A'}</span>
                   </div>
                 </div>
@@ -3737,19 +4022,19 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                   !selectedViewStudent.bankDetails.ifscCode &&
                   !selectedViewStudent.bankDetails.branchName
                 )) ? (
-                  <div className="text-xs text-slate-450 italic py-1 text-center">No Bank Details Available</div>
+                  <div className="text-xs text-slate-500 italic py-1 text-center">No Bank Details Available</div>
                 ) : (
                   <div className="space-y-1 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-slate-450 font-bold">Account Holder:</span>
+                      <span className="text-slate-500 font-bold">Account Holder:</span>
                       <span className="font-extrabold text-slate-800">{selectedViewStudent.bankDetails?.accountHolderName || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-450 font-bold">Bank Name:</span>
+                      <span className="text-slate-500 font-bold">Bank Name:</span>
                       <span className="font-extrabold text-slate-800">{selectedViewStudent.bankDetails?.bankName || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-450 font-bold">Account Number:</span>
+                      <span className="text-slate-500 font-bold">Account Number:</span>
                       <span className="font-extrabold text-slate-800 font-mono">
                         {selectedViewStudent.bankDetails?.accountNumber
                           ? selectedViewStudent.bankDetails.accountNumber.length > 4
@@ -3759,11 +4044,11 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-450 font-bold">IFSC Code:</span>
+                      <span className="text-slate-500 font-bold">IFSC Code:</span>
                       <span className="font-extrabold text-slate-800 font-mono">{selectedViewStudent.bankDetails?.ifscCode || 'N/A'}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-slate-450 font-bold">Branch Name:</span>
+                      <span className="text-slate-500 font-bold">Branch Name:</span>
                       <span className="font-extrabold text-slate-800">{selectedViewStudent.bankDetails?.branchName || 'N/A'}</span>
                     </div>
                   </div>
@@ -3773,6 +4058,15 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
           </div>
         )}
       </Modal>
+
+      <StudentPromotionModal
+        isOpen={isPromotionModalOpen}
+        onClose={() => setIsPromotionModalOpen(false)}
+        students={allStudents}
+        academicYears={promotionAcademicYears}
+        currentUserName={currentUser?.name}
+        onSuccess={handlePromotionSuccess}
+      />
 
       {/* 1. ADMIT STUDENT MODAL */}
       <Modal
@@ -3809,7 +4103,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                   GENDER
                 </label>
                 <select
-                  className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-hidden cursor-pointer"
+                  className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer"
                   value={studentForm.gender}
                   onChange={(e) => setStudentForm({ ...studentForm, gender: e.target.value })}
                   required
@@ -3850,7 +4144,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 </label>
                 <div className="relative flex items-center w-full">
                   <select
-                    className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-hidden cursor-pointer"
+                    className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer"
                     value={studentForm.class}
                     onChange={(e) => setStudentForm({ ...studentForm, class: e.target.value })}
                     required
@@ -3871,13 +4165,6 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                   </select>
                 </div>
               </div>
-              <Input
-                label="SECTION"
-                placeholder="A"
-                value={studentForm.section}
-                onChange={(e) => setStudentForm({ ...studentForm, section: e.target.value })}
-                required
-              />
             </div>
 
             <div className="grid grid-cols-2 gap-4">
@@ -3894,7 +4181,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                   CATEGORY
                 </label>
                 <select
-                  className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-hidden cursor-pointer"
+                  className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer"
                   value={studentForm.category}
                   onChange={(e) => setStudentForm({ ...studentForm, category: e.target.value as any })}
                   required
@@ -3951,7 +4238,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                 USES TRANSPORT SERVICES?
               </label>
               <select
-                className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-hidden cursor-pointer"
+                className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer"
                 value={studentForm.usesTransport}
                 onChange={(e) => setStudentForm({ ...studentForm, usesTransport: e.target.value as any })}
                 required
@@ -4167,7 +4454,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
             required
           />
 
-          <div className="bg-slate-50 p-3 rounded-lg border border-slate-105 space-y-3">
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100/80 space-y-3">
             <p className="text-[10px] font-bold text-slate-400 tracking-wider uppercase">User Portal Login Credentials</p>
             <div className="grid grid-cols-2 gap-3">
               <Input
@@ -4351,13 +4638,13 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
 
           return (
             <form id="fee-structure-form" onSubmit={handleFeeStructureSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-3 gap-4">
                 <div className="w-full flex flex-col gap-1.5">
                   <label className="text-xs font-semibold text-slate-700 tracking-wide select-none uppercase">
                     Class Name
                   </label>
                   <select
-                    className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 rounded-lg transition-all duration-200 cursor-pointer outline-hidden"
+                    className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 rounded-lg transition-all duration-200 cursor-pointer outline-none"
                     value={feeStructureForm.class}
                     onChange={(e) => setFeeStructureForm({ ...feeStructureForm, class: e.target.value })}
                     required
@@ -4377,10 +4664,9 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                     <option value="UKG">UKG</option>
                   </select>
                 </div>
-                
                 <Input
-                  label="ACADEMIC SESSION"
-                  placeholder="2026-27"
+                  label="ACADEMIC YEAR"
+                  placeholder={CURRENT_ACADEMIC_SESSION}
                   value={feeStructureForm.academicSession}
                   onChange={(e) => setFeeStructureForm({ ...feeStructureForm, academicSession: e.target.value })}
                   required
@@ -4439,7 +4725,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
               </div>
 
               {/* Dynamic summation display box */}
-              <div className="p-4 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between select-none">
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex items-center justify-between select-none">
                 <div className="space-y-0.5">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Automatically Calculated Total Fee</span>
                   <p className="text-[10px] text-slate-500 font-bold">Admission + Tuition + Computer + Exam + Cultural Activity</p>
@@ -4464,7 +4750,7 @@ Remaining Due  : ₹${(matchingRecord ? matchingRecord.dueAmount : 0).toLocaleSt
                   </button>
                 </div>
 
-                <p className="text-[11px] text-slate-450 leading-relaxed font-semibold select-none">
+                <p className="text-[11px] text-slate-500 leading-relaxed font-semibold select-none">
                   Divide total fee equally into June, September, December & March amounts.
                 </p>
 

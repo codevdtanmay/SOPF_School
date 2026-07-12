@@ -7,6 +7,13 @@ interface StudentDistributionProps {
   loading?: boolean;
 }
 
+interface DistributionColor {
+  color: string;
+  text: string;
+  badge: string;
+  lightColor: string;
+}
+
 export const StudentDistribution: React.FC<StudentDistributionProps> = ({ distribution, loading = false }) => {
   if (loading || !distribution) {
     return (
@@ -20,43 +27,49 @@ export const StudentDistribution: React.FC<StudentDistributionProps> = ({ distri
     );
   }
 
-const colors = [
+const colors: DistributionColor[] = [
   {
     color: "bg-blue-500",
     text: "text-blue-600",
-    badge: "bg-blue-100"
+    badge: "bg-blue-100",
+    lightColor: "bg-blue-50"
   },
   {
     color: "bg-emerald-500",
     text: "text-emerald-600",
-    badge: "bg-emerald-100"
+    badge: "bg-emerald-100",
+    lightColor: "bg-emerald-50"
   },
   {
     color: "bg-amber-500",
     text: "text-amber-600",
-    badge: "bg-amber-100"
+    badge: "bg-amber-100",
+    lightColor: "bg-amber-50"
   },
   {
     color: "bg-purple-500",
     text: "text-purple-600",
-    badge: "bg-purple-100"
+    badge: "bg-purple-100",
+    lightColor: "bg-purple-50"
   },
   {
     color: "bg-pink-500",
     text: "text-pink-600",
-    badge: "bg-pink-100"
+    badge: "bg-pink-100",
+    lightColor: "bg-pink-50"
   },
   {
     color: "bg-cyan-500",
     text: "text-cyan-600",
-    badge: "bg-cyan-100"
+    badge: "bg-cyan-100",
+    lightColor: "bg-cyan-50"
   }
 ];
 
-const levels = Object.entries(distribution).map(
-  ([name, count], index) => ({
+const levels = (Object.entries(distribution) as Array<[string, number]>).map(
+  ([name, rawCount], index) => ({
     name,
-    count,
+    count: Number(rawCount) || 0,
     ...colors[index % colors.length]
   })
 );

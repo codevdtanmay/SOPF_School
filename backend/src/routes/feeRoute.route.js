@@ -14,18 +14,21 @@ router.post(
 router.get(
   "/student/:id",
   authMiddleware,
+  authorize("admin"),
   feeController.getStudentFeeDetails
 );
 router.get(
   "/student/:id/history",
   authMiddleware,
+  authorize("admin"),
   feeController.getPaymentHistory
 );
 router.get(
   "/dashboard",
   authMiddleware,
+  authorize("admin"),
   feeController.getFeeDashboard
 );
-router.get("/", feeController.getAllFees);
-router.get("/monthly-report", feeController.getMonthlyFeeReport);
+router.get("/", authMiddleware, authorize("admin"), feeController.getAllFees);
+router.get("/monthly-report", authMiddleware, authorize("admin"), feeController.getMonthlyFeeReport);
 export default router;

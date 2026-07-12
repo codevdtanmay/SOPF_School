@@ -19,6 +19,8 @@ export interface Student {
   class?: string;
   section?: string;
   rollNo?: number;
+  academicYear?: string;
+  lifecycleStatus?: 'Active' | 'Left' | 'Alumni' | 'Transferred';
   fatherName?: string;
   motherName?: string;
   phone?: string;
@@ -62,6 +64,56 @@ export interface Student {
     branchName?: string;
   };
   usesTransport?: boolean;
+}
+
+export interface PromotionHistoryEntry {
+  id: string;
+  promotionDate: string;
+  promotedBy: string;
+  promotedById?: string;
+  studentId: string;
+  studentName: string;
+  admissionNo: string;
+  oldClass: string;
+  newClass: string;
+  oldSection?: string;
+  newSection?: string;
+  oldAcademicYear: string;
+  newAcademicYear: string;
+  reason?: string;
+}
+
+export interface FinancialReceiptEntry {
+  receiptNo: string;
+  paymentDate: string;
+  amount: number;
+  paymentMethod: string;
+  className: string;
+  section?: string;
+  academicYear: string;
+  admissionNo: string;
+  studentName: string;
+}
+
+export interface FinancialInstallmentEntry {
+  month: string;
+  status: 'Paid' | 'Partial' | 'Pending';
+  paidAmount: number;
+  dueAmount: number;
+  receipts: FinancialReceiptEntry[];
+}
+
+export interface FinancialHistoryEntry {
+  academicYear: string;
+  className: string;
+  section?: string;
+  totalFee: number;
+  paidAmount: number;
+  dueAmount: number;
+  status: 'Paid' | 'Partial' | 'Pending';
+  installments: FinancialInstallmentEntry[];
+  payments: FinancialReceiptEntry[];
+  receipts: FinancialReceiptEntry[];
 }
 
 export interface Teacher {
@@ -114,12 +166,15 @@ export interface DashboardStats {
 export interface FeeStructure {
   id: string;
   class: string;
+  section?: string;
   admissionFee: number;
   tuitionFee: number;
   computerFee: number;
   examFee: number;
   culturalActivityFee: number;
   totalFee: number;
+  monthlyFee?: number;
+  academicYear: string;
   academicSession: string;
   juneAmount: number;
   septemberAmount: number;
@@ -133,15 +188,33 @@ export interface FeeStructure {
 
 export interface Transport {
   id: string;
-  studentId: string;
-  name: string;
-  email: string;
-  admissionNo: string;
-  className: string;
-  routeName: string;
-  pickupPoint: string;
-  monthlyCharge: number;
-  joiningDate: string;
-  status: "Active" | "Inactive";
-}
 
+  studentId: string;
+
+  name: string;
+
+  email: string;
+
+  admissionNo: string;
+
+  className: string;
+
+  routeName: string;
+
+  pickupPoint: string;
+
+  monthlyCharge: number;
+
+  joiningDate: string;
+
+  // Current month's payment info
+  status: "Pending" | "Partial" | "Paid";
+
+  paidAmount: number;
+
+  dueAmount: number;
+
+  receiptNo?: string;
+
+  paymentDate?: string;
+}

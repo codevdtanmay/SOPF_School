@@ -97,7 +97,7 @@ const TransportStudents: React.FC<Props> = ({
 
   return (
     <div className="space-y-6">
-      <div className="bg-white border border-slate-200/80 p-4 rounded-xl flex flex-col md:flex-row md:items-center md:justify-between gap-4 shadow-3xs select-none">
+      <div className="bg-white border border-slate-200/80 p-4 rounded-xl flex flex-col md:flex-row md:items-center md:justify-between gap-4 shadow-sm select-none">
         <div className="relative flex-grow max-w-md">
           <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 pointer-events-none">
             <Search size={16} />
@@ -107,7 +107,7 @@ const TransportStudents: React.FC<Props> = ({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search Student name, Admission No, Route..."
-            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-lg text-xs font-semibold text-slate-700 outline-hidden transition-all duration-200 placeholder:text-slate-400"
+            className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:bg-white rounded-lg text-xs font-semibold text-slate-700 outline-none transition-all duration-200 placeholder:text-slate-400"
           />
         </div>
 
@@ -117,7 +117,7 @@ const TransportStudents: React.FC<Props> = ({
             <select
               value={classFilter}
               onChange={(e) => setClassFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[90px]"
+              className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[90px]"
             >
               <option value="All">All Grades</option>
               {classesList.map((cls) => (
@@ -131,7 +131,7 @@ const TransportStudents: React.FC<Props> = ({
             <select
               value={routeFilter}
               onChange={(e) => setRouteFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[90px]"
+              className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[90px]"
             >
               <option value="All">All Routes</option>
               {standardRoutes.map((rt) => (
@@ -145,7 +145,7 @@ const TransportStudents: React.FC<Props> = ({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-hidden min-w-[95px]"
+              className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[95px]"
             >
               <option value="All">All Status</option>
               <option value="Active">Active</option>
@@ -154,7 +154,7 @@ const TransportStudents: React.FC<Props> = ({
           </div>
 
           <div className="flex items-center gap-1">
-            <Button onClick={resetFilters} variant="outline" size="xs" className="text-slate-650">
+            <Button onClick={resetFilters} variant="outline" size="xs" className="text-slate-600">
               Reset
             </Button>
             <Button onClick={handleAddStudent} size="xs" leftIcon={<Plus size={13} />}>
@@ -164,7 +164,7 @@ const TransportStudents: React.FC<Props> = ({
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl shadow-3xs overflow-hidden">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
@@ -188,13 +188,17 @@ const TransportStudents: React.FC<Props> = ({
                 </tr>
               ) : filteredTransports.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="p-10 text-center text-xs font-bold text-slate-450">
+                  <td colSpan={8} className="p-10 text-center text-xs font-bold text-slate-500">
                     No students are currently matching the selected filters.
                   </td>
                 </tr>
               ) : (
                 paginatedTransports.map((t) => {
                   const isSelected = selectedTransport?.id === t.id;
+                  const isCurrentMonthPaid =
+                    t.paymentStatus === 'Paid' || (t.dueAmount != null && t.dueAmount <= 0);
+                  const isCurrentMonthPartial =
+                    !isCurrentMonthPaid && t.paymentStatus === 'Partial';
                   return (
                     <tr
                       key={t.id}
@@ -219,12 +223,16 @@ const TransportStudents: React.FC<Props> = ({
                       </td>
                       <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-1.5">
-                          {t.status === 'Active' && (
+                          {t.status === 'Active' && isCurrentMonthPaid ? (
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-1 rounded border border-slate-100">
+                              Current Month Paid
+                            </span>
+                          ) : t.status === 'Active' && (
                             <button
                               onClick={() => handleOpenCollectFee(t)}
-                              className="text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-md transition-all shadow-3xs cursor-pointer"
+                              className="text-[10px] font-black text-white bg-emerald-600 hover:bg-emerald-700 px-2.5 py-1 rounded-md transition-all shadow-sm cursor-pointer"
                             >
-                              Collect Fee
+                              {isCurrentMonthPartial ? 'Pay Remaining' : 'Collect Fee'}
                             </button>
                           )}
                           <button
@@ -253,7 +261,7 @@ const TransportStudents: React.FC<Props> = ({
 
         {filteredTransports.length > 0 && (
           <div className="p-4 border-t border-slate-100 flex items-center justify-between select-none">
-            <div className="text-xs text-slate-450 font-semibold">
+            <div className="text-xs text-slate-500 font-semibold">
               Showing <span className="font-bold text-slate-700">{Math.min(filteredTransports.length, (studPage - 1) * studLimit + 1)}</span> to{' '}
               <span className="font-bold text-slate-700">{Math.min(filteredTransports.length, studPage * studLimit)}</span> of{' '}
               <span className="font-bold text-slate-700">{filteredTransports.length}</span> students
@@ -265,7 +273,7 @@ const TransportStudents: React.FC<Props> = ({
                   setStudLimit(Number(e.target.value));
                   setStudPage(1);
                 }}
-                className="px-2 py-1 border border-slate-200 hover:border-slate-300 rounded text-xs font-bold text-slate-650 cursor-pointer"
+                className="px-2 py-1 border border-slate-200 hover:border-slate-300 rounded text-xs font-bold text-slate-600 cursor-pointer"
               >
                 {[10, 20, 50, 100].map((lim) => (
                   <option key={lim} value={lim}>{lim} per page</option>

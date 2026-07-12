@@ -13,11 +13,13 @@ router.post(
 router.get(
   "/",
   authMiddleware,
+  authorize("admin"),
   feeStructureController.getAllFeeStructures
 );
 router.get(
   "/:id",
   authMiddleware,
+  authorize("admin"),
   feeStructureController.getFeeStructureById
 );
 router.patch(

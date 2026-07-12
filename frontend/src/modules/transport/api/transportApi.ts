@@ -55,7 +55,12 @@ const mapTransport = (t: any): Transport => ({
 
   joiningDate: t.joiningDate,
 
-  status: t.status
+  status: t.status,
+  paymentStatus: t.paymentStatus ?? "Pending",
+  paidAmount: Number(t.paidAmount ?? 0),
+  dueAmount: Number(t.dueAmount ?? 0),
+  receiptNo: t.receiptNo ?? null,
+  paymentDate: t.paymentDate ?? null
 });
 
 const mapPayment = (p: any): TransportPayment => ({
@@ -63,20 +68,24 @@ const mapPayment = (p: any): TransportPayment => ({
 
   receiptNo: p.receiptNo,
 
-  studentId: p.studentId?._id,
+  studentId: p.studentId?._id || p.studentId,
 
-  studentName: p.studentId?.userId?.name,
+  studentName: p.studentName || p.studentId?.userId?.name,
 
-  admissionNo: p.studentId?.admissionNo,
+  admissionNo: p.admissionNo || p.studentId?.admissionNo,
 
-  className: `${p.studentId?.class}-${p.studentId?.section}`,
+  className: p.className || p.studentId?.class,
 
-  routeName: p.transportId?.routeName,
+  section: p.section || p.studentId?.section,
 
-  pickupPoint: p.transportId?.pickupPoint,
+  academicYear: p.academicYear || p.studentId?.academicYear,
+
+  routeName: p.routeName || p.transportId?.routeName,
+
+  pickupPoint: p.pickupPoint || p.transportId?.pickupPoint,
 
   monthlyCharge: Number(
-    p.transportId?.monthlyCharge
+    p.monthlyCharge ?? p.transportId?.monthlyCharge ?? p.amount ?? 0
   ),
 
   month: reverseMonthMap[p.month],
@@ -84,6 +93,9 @@ const mapPayment = (p: any): TransportPayment => ({
   year: String(p.year),
 
   amount: Number(p.amount),
+  paidAmount: Number(p.paidAmount ?? p.amount),
+  dueAmount: Number(p.dueAmount ?? 0),
+  status: p.status ?? "Pending",
 
   paymentMethod: p.paymentMethod,
 
@@ -165,11 +177,12 @@ export const transportApi = {
       await axiosInstance.post(
         "/transport-fees/collect",
         {
-          ...data,
-          month:
-            monthMap[data.month],
-          year:
-            Number(data.year)
+          studentId: data.studentId,
+          month: monthMap[data.month],
+          year: Number(data.year),
+          paidAmount: Number(data.paidAmount),
+          paymentMethod: data.paymentMethod,
+          remarks: data.remarks
         }
       );
 

@@ -62,10 +62,6 @@ export const LoginPage: React.FC = () => {
       // Role Based Redirecting
       if (user.role === 'admin') {
         navigate('/admin/dashboard');
-      } else if (user.role === 'teacher') {
-        navigate('/teacher/dashboard');
-      } else if (user.role === 'student') {
-        navigate('/student/dashboard');
       } else {
         navigate('/unauthorized');
       }
@@ -162,18 +158,6 @@ export const LoginPage: React.FC = () => {
                   </button>
                 }
               />
-            </div>
-
-            {/* Quick Helper Credentials info panel */}
-            <div className="p-3 bg-blue-50/40 border border-blue-100/60 rounded-xl space-y-1">
-              <span className="text-[10px] text-blue-600 font-extrabold uppercase tracking-widest block">
-                Pansy Demo Accounts (password123 for all):
-              </span>
-              <ul className="text-[10px] text-slate-500 space-y-0.5 font-medium leading-none">
-                <li>• Admin Account: <strong className="text-slate-700 select-all">admin@pansy.edu</strong></li>
-                <li>• Teacher Account: <strong className="text-slate-700 select-all">teacher@pansy.edu</strong></li>
-                <li>• Student Account: <strong className="text-slate-700 select-all">student@pansy.edu</strong></li>
-              </ul>
             </div>
 
             {/* Submit */}
