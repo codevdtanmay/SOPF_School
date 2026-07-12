@@ -11,6 +11,7 @@ import teacherRoute from "./routes/teacherRoute.route.js";
 import feeStructureRoute from "./routes/feeStructureRoute.route.js";
 import feeRoute from "./routes/feeRoute.route.js";
 import dashboardRoute from "./routes/dashboardRoute.js";
+import whatsappRoute from "./routes/whatsapp.route.js";
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -67,5 +68,7 @@ app.use("/api/tc", tcRoute)
 
 // Transport Fee Module
 app.use("/api/transport-fees", transportPaymentRoute);
+
+app.use("/api/whatsapp", whatsappRoute);
 
 export default app;

@@ -2,6 +2,7 @@ import studentModel from "../models/student.model.js";
 import feeStructureModel from "../models/feeStructure.js";
 import feePaymentModel from "../models/feePayment.model.js";
 import computeInstallmentDetails from "../utils/installmentCalculator.js";
+import { sendFeeReceiptMessage } from "../services/whatsapp.service.js"
 import {
   buildFeePaymentSnapshot,
   currentMonthLabel,
@@ -307,6 +308,27 @@ const collectFee = async (req, res) => {
 
       throw error;
     });
+try {
+  if (student.phone) {
+    await sendFeeReceiptMessage({
+  phone: student.phone.startsWith("91")
+    ? student.phone
+    : `91${student.phone}`,
+  studentName: payment.studentName,
+  admissionNo: payment.admissionNo,
+  className: payment.className,
+  section: payment.section,
+  academicYear: payment.academicYear,
+  installment: payment.month,
+  paidAmount: payment.paidAmount,
+  dueAmount: payment.dueAmount,
+  paymentMethod: payment.paymentMethod,
+  receiptNo: payment.receiptNo,
+});
+  }
+} catch (err) {
+  console.error("WhatsApp Error:", err);
+}
 
     return res.status(200).json({
       success: true,
