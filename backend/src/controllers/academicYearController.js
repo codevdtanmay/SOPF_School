@@ -1,6 +1,7 @@
 import academicYearModel from "../models/academicYear.model.js";
 import feeStructureModel from "../models/feeStructure.js";
 import { normalizeAcademicYear } from "../utils/feeLifecycle.js";
+import mongoose from "mongoose";
 
 const computeTotalFee = (structure) =>
   Number(structure.admissionFee || 0) +
@@ -9,11 +10,11 @@ const computeTotalFee = (structure) =>
   Number(structure.examFee || 0) +
   Number(structure.culturalActivityFee || 0);
 
-const repairFeeStructureTotalsForAcademicYear = async (academicYear) => {
+const repairFeeStructureTotalsForAcademicYear = async (academicYear, session = null) => {
   const structures = await feeStructureModel.find({
     academicYear,
     isDeleted: false
-  });
+  }).session(session);
 
   if (!structures.length) {
     return 0;
@@ -24,7 +25,7 @@ const repairFeeStructureTotalsForAcademicYear = async (academicYear) => {
     const totalFee = computeTotalFee(structure);
     if (Number(structure.totalFee || 0) !== totalFee) {
       structure.totalFee = totalFee;
-      await structure.save();
+      await structure.save({ session });
       repaired += 1;
     }
   }
@@ -32,10 +33,11 @@ const repairFeeStructureTotalsForAcademicYear = async (academicYear) => {
   return repaired;
 };
 
-const cloneFeeStructuresForAcademicYear = async (sourceAcademicYear, targetAcademicYear) => {
+const cloneFeeStructuresForAcademicYear = async (sourceAcademicYear, targetAcademicYear, session = null) => {
   const sourceStructures = await feeStructureModel
     .find({ academicYear: sourceAcademicYear, isDeleted: false })
-    .sort({ class: 1, section: 1, createdAt: 1 });
+    .sort({ class: 1, section: 1, createdAt: 1 })
+    .session(session);
 
   if (!sourceStructures.length) {
     return { cloned: 0, skipped: 0 };
@@ -43,7 +45,8 @@ const cloneFeeStructuresForAcademicYear = async (sourceAcademicYear, targetAcade
 
   const existingTargetStructures = await feeStructureModel
     .find({ academicYear: targetAcademicYear, isDeleted: false })
-    .select("class section");
+    .select("class section")
+    .session(session);
 
   const existingKeys = new Set(
     existingTargetStructures.map((structure) =>
@@ -86,7 +89,7 @@ const cloneFeeStructuresForAcademicYear = async (sourceAcademicYear, targetAcade
     return { cloned: 0, skipped: sourceStructures.length };
   }
 
-  await feeStructureModel.insertMany(structuresToCreate, { ordered: false });
+  await feeStructureModel.insertMany(structuresToCreate, { ordered: false, session });
 
   return {
     cloned: structuresToCreate.length,
@@ -117,24 +120,38 @@ const getAcademicYears = async (_req, res) => {
 const setCurrentAcademicYear = async (req, res) => {
   try {
     const { id } = req.params;
+    const session = await mongoose.startSession();
+    let targetAcademicYear;
+    let repairedCount = 0;
 
-    const targetAcademicYear = await academicYearModel.findById(id);
+    try {
+      await session.withTransaction(async () => {
+        targetAcademicYear = await academicYearModel.findById(id).session(session);
+        if (!targetAcademicYear) {
+          return;
+        }
+
+        await academicYearModel.updateMany(
+          { _id: { $ne: targetAcademicYear._id } },
+          { $set: { isCurrent: false } },
+          { session }
+        );
+
+        targetAcademicYear.isCurrent = true;
+        await targetAcademicYear.save({ session });
+
+        repairedCount = await repairFeeStructureTotalsForAcademicYear(targetAcademicYear.label, session);
+      });
+    } finally {
+      await session.endSession();
+    }
+
     if (!targetAcademicYear) {
       return res.status(404).json({
         success: false,
         message: "Academic year not found"
       });
     }
-
-    await academicYearModel.updateMany(
-      { _id: { $ne: targetAcademicYear._id } },
-      { $set: { isCurrent: false } }
-    );
-
-    targetAcademicYear.isCurrent = true;
-    await targetAcademicYear.save();
-
-    const repairedCount = await repairFeeStructureTotalsForAcademicYear(targetAcademicYear.label);
 
     return res.status(200).json({
       success: true,
@@ -154,59 +171,90 @@ const setCurrentAcademicYear = async (req, res) => {
 
 const addNextSession = async (_req, res) => {
   try {
-    const latestAcademicYear = await academicYearModel
-      .findOne()
-      .sort({ startDate: -1, createdAt: -1, label: -1 });
+    const session = await mongoose.startSession();
+    let nextAcademicYear;
+    let clonedStats = { cloned: 0, skipped: 0 };
+    let repairedCount = 0;
+    let createdNewAcademicYear = false;
+    let validationError = "";
+    let notFound = false;
 
-    if (!latestAcademicYear) {
+    try {
+      await session.withTransaction(async () => {
+        const latestAcademicYear = await academicYearModel
+          .findOne()
+          .sort({ startDate: -1, createdAt: -1, label: -1 })
+          .session(session);
+
+        if (!latestAcademicYear) {
+          notFound = true;
+          return;
+        }
+
+        const labelMatch = normalizeAcademicYear(latestAcademicYear.label).match(/^(\d{4})-(\d{2}|\d{4})$/);
+
+        if (!labelMatch) {
+          validationError = "Latest academic year label is not in a supported format";
+          return;
+        }
+
+        const startYear = Number(labelMatch[1]);
+        const endYear = Number(labelMatch[2].length === 2 ? String(startYear + 1) : labelMatch[2]);
+        const nextStartYear = startYear + 1;
+        const nextEndYear = endYear + 1;
+        const nextLabel = `${nextStartYear}-${String(nextEndYear).slice(-2)}`;
+
+        const existing = await academicYearModel.findOne({ label: nextLabel }).session(session);
+        if (existing) {
+          nextAcademicYear = existing;
+          clonedStats = await cloneFeeStructuresForAcademicYear(latestAcademicYear.label, nextLabel, session);
+          repairedCount = await repairFeeStructureTotalsForAcademicYear(nextLabel, session);
+          return;
+        }
+
+        nextAcademicYear = await academicYearModel
+          .create([{
+            label: nextLabel,
+            startDate: new Date(nextStartYear, 6, 1),
+            endDate: new Date(nextEndYear, 5, 30),
+            isCurrent: false
+          }], { session })
+          .then((docs) => docs[0]);
+        createdNewAcademicYear = true;
+
+        clonedStats = await cloneFeeStructuresForAcademicYear(latestAcademicYear.label, nextLabel, session);
+        repairedCount = await repairFeeStructureTotalsForAcademicYear(nextLabel, session);
+    });
+    } finally {
+      await session.endSession();
+    }
+
+    if (notFound) {
       return res.status(404).json({
         success: false,
         message: "No academic year found to extend"
       });
     }
 
-    const labelMatch = normalizeAcademicYear(latestAcademicYear.label).match(/^(\d{4})-(\d{2}|\d{4})$/);
-
-    if (!labelMatch) {
+    if (validationError) {
       return res.status(400).json({
         success: false,
-        message: "Latest academic year label is not in a supported format"
+        message: validationError
       });
     }
 
-    const startYear = Number(labelMatch[1]);
-    const endYear = Number(labelMatch[2].length === 2 ? String(startYear + 1) : labelMatch[2]);
-    const nextStartYear = startYear + 1;
-    const nextEndYear = endYear + 1;
-    const nextLabel = `${nextStartYear}-${String(nextEndYear).slice(-2)}`;
-
-    const existing = await academicYearModel.findOne({ label: nextLabel });
-    if (existing) {
-      const clonedStats = await cloneFeeStructuresForAcademicYear(latestAcademicYear.label, nextLabel);
-      const repairedCount = await repairFeeStructureTotalsForAcademicYear(nextLabel);
-      return res.status(200).json({
-        success: true,
-        message: "Next academic year already exists",
-        academicYear: existing,
-        feeStructuresCloned: clonedStats.cloned,
-        feeStructuresSkipped: clonedStats.skipped,
-        feeStructuresRepaired: repairedCount
+    if (!nextAcademicYear) {
+      return res.status(500).json({
+        success: false,
+        message: "Unable to create the next academic year"
       });
     }
 
-    const nextAcademicYear = await academicYearModel.create({
-      label: nextLabel,
-      startDate: new Date(nextStartYear, 6, 1),
-      endDate: new Date(nextEndYear, 5, 30),
-      isCurrent: false
-    });
+    const statusCode = createdNewAcademicYear ? 201 : 200;
 
-    const clonedStats = await cloneFeeStructuresForAcademicYear(latestAcademicYear.label, nextLabel);
-    const repairedCount = await repairFeeStructureTotalsForAcademicYear(nextLabel);
-
-    return res.status(201).json({
+    return res.status(statusCode).json({
       success: true,
-      message: "Next academic year created successfully",
+      message: statusCode === 200 ? "Next academic year already exists" : "Next academic year created successfully",
       academicYear: nextAcademicYear,
       feeStructuresCloned: clonedStats.cloned,
       feeStructuresSkipped: clonedStats.skipped,

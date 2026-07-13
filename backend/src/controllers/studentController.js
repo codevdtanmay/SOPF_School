@@ -338,62 +338,71 @@ const addStudent = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = await userModel.create({
-      name,
-      email: normalizedEmail,
-      password: hashedPassword,
-      role: "student"
-    });
-
     const transportValue =
       usesTransport === true || usesTransport === "Yes";
+    const addSession = await mongoose.startSession();
+    let student;
 
-    const student = await studentModel.create({
-      userId: user._id,
+    try {
+      await addSession.withTransaction(async () => {
+        const user = await userModel.create([{
+          name,
+          email: normalizedEmail,
+          password: hashedPassword,
+          role: "student"
+        }], { session: addSession });
 
-      admissionNo: normalizedAdmissionNo,
+        const createdStudent = await studentModel.create([{
+          userId: user[0]._id,
 
-      class: normalizedStudentClass,
-      rollNo,
-      academicYear: resolvedAcademicYear,
-      section: String(req.body.section || "").trim(),
-      lifecycleStatus: lifecycleStatus || "Active",
+          admissionNo: normalizedAdmissionNo,
 
-      fatherName,
-      motherName,
-      phone,
+          class: normalizedStudentClass,
+          rollNo,
+          academicYear: resolvedAcademicYear,
+          section: String(req.body.section || "").trim(),
+          lifecycleStatus: lifecycleStatus || "Active",
 
-      gender,
-      dateOfBirth: normalizeOptionalDate(dateOfBirth),
-      joiningDate: normalizeOptionalDate(joiningDate),
+          fatherName,
+          motherName,
+          phone,
 
-      category,
+          gender,
+          dateOfBirth: normalizeOptionalDate(dateOfBirth),
+          joiningDate: normalizeOptionalDate(joiningDate),
 
-      aadharNo,
-      samagraId,
-      apaarId,
-      panNo,
-      bankDetails,
-      usesTransport: transportValue,
-      address,
+          category,
 
-      feeStructureId: feeStructure._id,
-      totalFee: feeStructure.totalFee,
-      paidAmount: 0,
-      dueAmount: feeStructure.totalFee,
-      status: "Pending"
-    });
+          aadharNo,
+          samagraId,
+          apaarId,
+          panNo,
+          bankDetails,
+          usesTransport: transportValue,
+          address,
 
-    if (academicYearDoc) {
-      await enrollmentModel.create({
-        student: student._id,
-        academicYear: academicYearDoc._id,
-        class: studentClass,
-        section: String(req.body.section || "").trim(),
-        rollNo: rollNo ? Number(rollNo) : null,
-        status: "active"
+          feeStructureId: feeStructure._id,
+          totalFee: feeStructure.totalFee,
+          paidAmount: 0,
+          dueAmount: feeStructure.totalFee,
+          status: "Pending"
+        }], { session: addSession });
+
+        student = createdStudent[0];
+
+        if (academicYearDoc) {
+          await enrollmentModel.create([{
+            student: student._id,
+            academicYear: academicYearDoc._id,
+            class: studentClass,
+            section: String(req.body.section || "").trim(),
+            rollNo: rollNo ? Number(rollNo) : null,
+            status: "active"
+          }], { session: addSession });
+        }
       });
+    } finally {
+      await addSession.endSession();
     }
 
     const populatedStudent = await studentModel
@@ -1295,6 +1304,11 @@ const updatebyId = async (req, res) => {
 
     try {
       await session.withTransaction(async () => {
+        await userModel.findByIdAndUpdate(student.userId, {
+          name,
+          email
+        }, { session });
+
         if (academicYearDoc) {
           const existingEnrollment = await enrollmentModel.findOne({
             student: student._id,

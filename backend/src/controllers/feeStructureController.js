@@ -88,7 +88,7 @@ const createFeeStructure = async (req, res) => {
 
   } catch (error) {
 
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -112,6 +112,8 @@ const getAllFeeStructures = async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -150,6 +152,8 @@ const getFeeStructureById = async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -194,6 +198,8 @@ const updateFeeStructure = async (req, res) => {
 
   } catch (error) {
 
+    console.error(error);
+
     return res.status(500).json({
       success: false,
       message: "Internal Server Error"
@@ -226,6 +232,8 @@ const deleteFeeStructure = async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
 
     return res.status(500).json({
       success: false,

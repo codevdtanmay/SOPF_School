@@ -6,6 +6,79 @@ import {
   buildTransportPaymentSnapshot,
   normalizeAcademicYear
 } from "../utils/feeLifecycle.js";
+import { resolveStudentPlacement } from "../utils/studentPlacement.js";
+
+const MONTH_LABELS = [
+  "",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December"
+];
+
+const BILLING_MONTH_LABELS = [
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+  "January",
+  "February",
+  "March",
+  "April"
+];
+
+const isTransportBillingMonth = (month) => BILLING_MONTH_LABELS.includes(String(month || ""));
+
+const getTransportAcademicYear = (month, year) => {
+  const monthNumber = Number(month);
+  const yearNumber = Number(year);
+
+  if (!Number.isFinite(monthNumber) || !Number.isFinite(yearNumber)) {
+    return "";
+  }
+
+  if (!isTransportBillingMonth(MONTH_LABELS[monthNumber])) {
+    return "";
+  }
+
+  if (monthNumber >= 6) {
+    return `${yearNumber}-${String(yearNumber + 1).slice(-2)}`;
+  }
+
+  return `${yearNumber - 1}-${String(yearNumber).slice(-2)}`;
+};
+
+const getCurrentTransportCycle = (date = new Date()) => {
+  const currentMonth = date.getMonth() + 1;
+  const currentYear = date.getFullYear();
+
+  if (currentMonth === 5) {
+    return {
+      month: 4,
+      year: currentYear,
+      academicYear: `${currentYear - 1}-${String(currentYear).slice(-2)}`
+    };
+  }
+
+  const academicYear = getTransportAcademicYear(currentMonth, currentYear);
+
+  return {
+    month: currentMonth,
+    year: currentYear,
+    academicYear
+  };
+};
 
 const parseMonthlyCharge = (value) => {
   const numericValue = Number(value);
@@ -36,6 +109,24 @@ const collectTransportFee = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Student, month, year and paid amount are required"
+      });
+    }
+
+    const monthNumber = Number(month);
+    const yearNumber = Number(year);
+    const academicYear = getTransportAcademicYear(monthNumber, yearNumber);
+
+    if (!isTransportBillingMonth(MONTH_LABELS[monthNumber])) {
+      return res.status(400).json({
+        success: false,
+        message: "May is a holiday month and cannot be billed for transport"
+      });
+    }
+
+    if (!academicYear) {
+      return res.status(400).json({
+        success: false,
+        message: "Unable to resolve transport academic year for the selected month"
       });
     }
 
@@ -75,11 +166,12 @@ const collectTransportFee = async (req, res) => {
 
     let payment = await transportPaymentModel.findOne({
       studentId,
-      month,
-      year
+      month: monthNumber,
+      year: yearNumber,
+      academicYear
     });
 
-    const receiptNo = `TR-${year}${String(month).padStart(2, "0")}-${Date.now()
+    const receiptNo = `TR-${yearNumber}${String(monthNumber).padStart(2, "0")}-${Date.now()
       .toString()
       .slice(-5)}`;
 
@@ -93,14 +185,18 @@ const collectTransportFee = async (req, res) => {
       });
     }
 
+    const placement = await resolveStudentPlacement(student, academicYear);
+
     if (!payment) {
       const dueAmount = totalAmount - paidNow;
 
       payment = await transportPaymentModel.create(buildTransportPaymentSnapshot({
         student,
         transport,
-        month,
-        year,
+        placement,
+        month: monthNumber,
+        year: yearNumber,
+        academicYear,
         receiptNo,
         amount: totalAmount,
         paidAmount: paidNow,
@@ -293,7 +389,7 @@ const getPaymentHistory = async (req, res) => {
 
   } catch (error) {
 
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -313,12 +409,16 @@ const getPaymentHistory = async (req, res) => {
 const getDashboard = async (req, res) => {
 
   try {
+    const currentCycle = getCurrentTransportCycle();
+    const currentAcademicYear = currentCycle.academicYear;
 
     const transports =
       await transportModel.find();
 
     const payments =
-      await transportPaymentModel.find();
+      await transportPaymentModel.find({
+        academicYear: currentAcademicYear
+      });
 
     const totalStudents =
       transports.length;
@@ -330,11 +430,8 @@ const getDashboard = async (req, res) => {
     0
   );
 
-    const currentMonth =
-      new Date().getMonth() + 1;
-
-    const currentYear =
-      new Date().getFullYear();
+    const currentMonth = currentCycle.month;
+    const currentYear = currentCycle.year;
 
     const currentMonthCollection =
   payments
@@ -353,6 +450,7 @@ const getDashboard = async (req, res) => {
       success: true,
 
       totalStudents,
+      currentAcademicYear,
 
       totalCollection,
 
@@ -362,7 +460,7 @@ const getDashboard = async (req, res) => {
 
   } catch (error) {
 
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -396,13 +494,26 @@ const getMonthlyReport = async (req, res) => {
       });
     }
 
+    const monthNumber = Number(month);
+    const yearNumber = Number(year);
+
+    if (!isTransportBillingMonth(MONTH_LABELS[monthNumber])) {
+      return res.status(400).json({
+        success: false,
+        message: "May is a holiday month and has no transport billing"
+      });
+    }
+
+    const resolvedAcademicYear =
+      normalizeAcademicYear(academicYear) || getTransportAcademicYear(monthNumber, yearNumber);
+
     const paymentFilter = {
-      month: Number(month),
-      year: Number(year)
+      month: monthNumber,
+      year: yearNumber
     };
 
-    if (academicYear) {
-      paymentFilter.academicYear = academicYear;
+    if (resolvedAcademicYear) {
+      paymentFilter.academicYear = resolvedAcademicYear;
     }
 
     const payments =
@@ -425,6 +536,8 @@ const getMonthlyReport = async (req, res) => {
 
       year,
 
+      academicYear: resolvedAcademicYear,
+
       totalCollection,
 
       totalPayments:
@@ -436,7 +549,7 @@ const getMonthlyReport = async (req, res) => {
 
   } catch (error) {
 
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -456,12 +569,10 @@ const getMonthlyReport = async (req, res) => {
 const getPendingStudents = async (req, res) => {
 
   try {
-
-    const currentMonth =
-      new Date().getMonth() + 1;
-
-    const currentYear =
-      new Date().getFullYear();
+    const currentCycle = getCurrentTransportCycle();
+    const currentMonth = currentCycle.month;
+    const currentYear = currentCycle.year;
+    const currentAcademicYear = currentCycle.academicYear;
 
     const transports =
       await transportModel
@@ -491,7 +602,9 @@ const getPendingStudents = async (req, res) => {
             currentMonth,
 
           year:
-            currentYear
+            currentYear,
+
+          academicYear: currentAcademicYear
 
         });
 
@@ -517,7 +630,7 @@ const getPendingStudents = async (req, res) => {
 
   } catch (error) {
 
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
 
@@ -533,13 +646,24 @@ const getPendingStudents = async (req, res) => {
 const getRouteReport = async (req, res) => {
   try {
     const { month, year } = req.query;
+    const monthNumber = Number(month);
+    const yearNumber = Number(year);
+    const academicYear = getTransportAcademicYear(monthNumber, yearNumber);
+
+    if (!isTransportBillingMonth(MONTH_LABELS[monthNumber])) {
+      return res.status(400).json({
+        success: false,
+        message: "May is a holiday month and has no transport billing"
+      });
+    }
 
     const transports = await transportModel.find({ status: "Active" });
 
     const payments = await transportPaymentModel
       .find({
-        month: Number(month),
-        year: Number(year)
+        month: monthNumber,
+        year: yearNumber,
+        ...(academicYear ? { academicYear } : {})
       })
       .populate("transportId");
 
@@ -572,7 +696,7 @@ const getRouteReport = async (req, res) => {
     });
 
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,

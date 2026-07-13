@@ -19,9 +19,10 @@ const authMiddleware = async(req, res, next)=>{
 
     req.user = decoded;
 
-    next();
+     next();
 
    } catch (error) {
+    console.error("Auth middleware error:", error);
     return res.status(401).json({
       success: false,
       message: "Invalid token"

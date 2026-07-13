@@ -27,6 +27,10 @@ import {
   Transport,
   TransportDashboard
 } from '../../modules/transport/types/transport.types';
+import {
+  TRANSPORT_BILLING_MONTHS,
+  getCurrentTransportBillingMonth
+} from '../../modules/transport/utils/transportCalendar';
 import { Student } from '../../types';
 import { formatDate } from '../../utils/dateFormatter';
 import { exportToExcel, exportToPrintablePDF } from '../../utils/exportUtils';
@@ -56,24 +60,9 @@ type RouteReportRow = {
 };
 
 const DEFAULT_ROUTES = ['Ugli', 'Lamta'];
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December'
-];
-
-const CURRENT_MONTH = MONTHS[new Date().getMonth()];
+const MONTHS = TRANSPORT_BILLING_MONTHS;
 const CURRENT_YEAR = String(new Date().getFullYear());
-const getCurrentCalendarMonth = () => MONTHS[new Date().getMonth()];
+const getCurrentCalendarMonth = () => getCurrentTransportBillingMonth();
 const getCurrentCalendarYear = () => String(new Date().getFullYear());
 
 export const TransportPanel: React.FC<TransportPanelProps> = ({
@@ -91,15 +80,9 @@ export const TransportPanel: React.FC<TransportPanelProps> = ({
   const [monthlyReport, setMonthlyReport] = useState<TransportFeePayment[]>([]);
   const [pendingStudents, setPendingStudents] = useState<PendingTransportStudent[]>([]);
   const [selectedTransport, setSelectedTransport] = useState<Transport | null>(null);
-interface RouteReportRow {
-  route: string;
-  studentsCount: number;
-  collection: number;
-}
-
-const [routeReport, setRouteReport] = useState<RouteReportRow[]>([]);
-const [routeLoading, setRouteLoading] = useState(false);
-const [routeError, setRouteError] = useState("");
+  const [routeReport, setRouteReport] = useState<RouteReportRow[]>([]);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [routeError, setRouteError] = useState("");
   const [studentsLoading, setStudentsLoading] = useState(true);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [dashboardLoading, setDashboardLoading] = useState(true);

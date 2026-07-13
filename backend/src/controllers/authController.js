@@ -21,9 +21,6 @@ const register = async(req,res) => {
     const user = await userModel.create({
         name, email, password : hashedPassword, role
     })
-    console.log("Created user:", user);
-
-console.log("DB Name:", userModel.db.name)
    const token = jwt.sign({
      id: user._id,
    }, process.env.JWT_SECRET);
@@ -136,9 +133,17 @@ const login = async(req,res) => {
 }
   
 const getme = async(req, res) => {
+    try {
     const user = await userModel.findById(
         req.user.id
     ).select("-password")
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
 
     res.status(200).json({
         success:true,
@@ -149,15 +154,32 @@ const getme = async(req, res) => {
     role: user.role
   }
     })
+    } catch (error) {
+      console.error("Get Me User Issue:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal Server Error"
+      });
+    }
 }
 
 const logout = async(req, res) => {
-    res.clearCookie("token")
+    try {
+      res.clearCookie("token")
 
-    res.status(200).json({
-        success: true,
-        message: "Logged Out Successfully"
-    })
+      res.status(200).json({
+          success: true,
+          message: "Logged Out Successfully"
+      })
+    } catch (error) {
+      console.error("Logout User Issue:", error);
+
+      return res.status(500).json({
+        success: false,
+        message: "Internal Server Error"
+      });
+    }
 }
 
 export default {register, login, getme, logout}

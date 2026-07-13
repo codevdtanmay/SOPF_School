@@ -1169,7 +1169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setTeacherForm({ name: '', email: '', password: 'password123', subject: '', department: 'Science', contact: '' });
       triggerDataRefresh();
     } catch (err: any) {
-      setFormErrors({ submit: err.message || 'Onboarding failed' });
+      setFormErrors({ submit: err.response?.data?.message || err.message || 'Onboarding failed' });
     } finally {
       setSubmitLoading(false);
     }
@@ -1194,7 +1194,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setNoticeForm({ title: '', content: '', priority: 'Medium', publishedBy: 'Admin Office' });
       triggerDataRefresh();
     } catch (err: any) {
-      setFormErrors({ submit: err.message || 'Publishing failed' });
+      setFormErrors({ submit: err.response?.data?.message || err.message || 'Publishing failed' });
     } finally {
       setSubmitLoading(false);
     }
@@ -1227,7 +1227,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setFeeForm({ studentId: '', amountPaid: '', paymentMethod: 'Cash' });
       triggerDataRefresh();
     } catch (err: any) {
-      setFormErrors({ submit: err.message || 'Transaction recording failed' });
+      setFormErrors({ submit: err.response?.data?.message || err.message || 'Transaction recording failed' });
     } finally {
       setSubmitLoading(false);
     }
@@ -1318,7 +1318,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       setIsFeeStructureModalOpen(false);
       triggerDataRefresh();
     } catch (err: any) {
-      setFormErrors({ submit: err.message || 'Action failed' });
+      setFormErrors({ submit: err.response?.data?.message || err.message || 'Action failed' });
     } finally {
       setSubmitLoading(false);
     }

@@ -2,6 +2,10 @@ import React, { useEffect, useState } from "react";
 import Button from "../../../components/common/Button";
 import Modal from "../../../components/common/Modal";
 import { Transport } from "../types/transport.types";
+import {
+  TRANSPORT_BILLING_MONTHS,
+  getCurrentTransportBillingMonth
+} from "../utils/transportCalendar";
 
 interface Props {
   isOpen: boolean;
@@ -20,20 +24,7 @@ interface Props {
   }) => void;
 }
 
-const months = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+const months = TRANSPORT_BILLING_MONTHS;
 
 const CollectTransportFeeModal: React.FC<Props> = ({
   isOpen,
@@ -45,11 +36,10 @@ const CollectTransportFeeModal: React.FC<Props> = ({
   onClose,
   onSubmit,
 }) => {
-  const today = new Date();
   const defaultMonth = initialMonth && months.includes(initialMonth)
     ? initialMonth
-    : months[today.getMonth()];
-  const defaultYear = initialYear ? Number(initialYear) : today.getFullYear();
+    : getCurrentTransportBillingMonth();
+  const defaultYear = initialYear ? Number(initialYear) : new Date().getFullYear();
 
   const [month, setMonth] = useState(defaultMonth);
   const [year, setYear] = useState(defaultYear);

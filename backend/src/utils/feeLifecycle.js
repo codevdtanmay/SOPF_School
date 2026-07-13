@@ -90,8 +90,10 @@ export const buildFeePaymentSnapshot = ({
 export const buildTransportPaymentSnapshot = ({
   student,
   transport,
+  placement = null,
   month,
   year,
+  academicYear = "",
   receiptNo,
   amount,
   paidAmount,
@@ -101,15 +103,20 @@ export const buildTransportPaymentSnapshot = ({
   paymentDate = new Date(),
   remarks = ""
 }) => {
-  const placement = resolveStudentPlacementSync(student, student?.currentEnrollment || student?.enrollment || null);
+  const resolvedPlacement =
+    placement ||
+    resolveStudentPlacementSync(student, student?.currentEnrollment || student?.enrollment || null);
 
   return {
     studentId: student._id,
     studentName: student.userId?.name || "",
     admissionNo: student.admissionNo || "",
-    className: placement.className,
-    section: placement.section,
-    academicYear: placement.academicYear || normalizeAcademicYear(student.academicYear),
+    className: resolvedPlacement.className,
+    section: resolvedPlacement.section,
+    academicYear:
+      normalizeAcademicYear(academicYear) ||
+      resolvedPlacement.academicYear ||
+      normalizeAcademicYear(student.academicYear),
     transportId: transport?._id || null,
     routeName: transport?.routeName || "",
     pickupPoint: transport?.pickupPoint || "",

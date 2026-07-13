@@ -1,6 +1,7 @@
 import transportModel from "../models/transport.model.js";
 import studentModel from "../models/student.model.js";
 import transportPaymentModel from "../models/transportPayment.model.js";
+import { getCurrentAcademicYearDoc, resolveStudentPlacement } from "../utils/studentPlacement.js";
 
 const formatClassName = (className = "", section = "") => {
   const cls = String(className || "").trim();
@@ -19,6 +20,11 @@ const parseMonthlyCharge = (value) => {
   return Number.isFinite(numericValue) && numericValue > 0
     ? numericValue
     : null;
+};
+
+const resolveCurrentTransportPlacement = async (student) => {
+  const academicYearDoc = await getCurrentAcademicYearDoc();
+  return resolveStudentPlacement(student, academicYearDoc?.label || "");
 };
 
 
@@ -76,6 +82,9 @@ const addTransport = async (req, res) => {
         select: "name email"
       }
     });
+    const placement = populatedTransport.studentId
+      ? await resolveCurrentTransportPlacement(populatedTransport.studentId)
+      : null;
 
     return res.status(201).json({
       success: true,
@@ -86,7 +95,8 @@ const addTransport = async (req, res) => {
         name: populatedTransport.studentId?.userId?.name,
         email: populatedTransport.studentId?.userId?.email,
         admissionNo: populatedTransport.studentId?.admissionNo,
-        className: formatClassName(populatedTransport.studentId?.class, populatedTransport.studentId?.section),
+        className: formatClassName(placement?.className, placement?.section),
+        academicYear: placement?.academicYear || "",
         routeName: populatedTransport.routeName,
         pickupPoint: populatedTransport.pickupPoint,
         monthlyCharge: populatedTransport.monthlyCharge,
@@ -107,9 +117,9 @@ const addTransport = async (req, res) => {
 
 const getAllTransportStudents = async (req, res) => {
   try {
-
     const currentMonth = new Date().getMonth() + 1;
     const currentYear = new Date().getFullYear();
+    const currentAcademicYearDoc = await getCurrentAcademicYearDoc();
 
     const transports = await transportModel
       .find()
@@ -125,6 +135,10 @@ const getAllTransportStudents = async (req, res) => {
       transports
         .filter((transport) => Boolean(transport.studentId))
         .map(async (transport) => {
+          const placement = await resolveStudentPlacement(
+            transport.studentId,
+            currentAcademicYearDoc?.label || ""
+          );
           const payment = await transportPaymentModel.findOne({
             studentId: transport.studentId._id,
             month: currentMonth,
@@ -145,7 +159,7 @@ const getAllTransportStudents = async (req, res) => {
 
             className: payment?.className
               ? formatClassName(payment.className, payment.section)
-              : formatClassName(transport.studentId?.class, transport.studentId?.section),
+              : formatClassName(placement.className, placement.section),
 
             routeName: transport.routeName,
 
@@ -169,7 +183,11 @@ const getAllTransportStudents = async (req, res) => {
 
             receiptNo: payment?.receiptNo || null,
 
-            academicYear: payment?.academicYear || transport.studentId?.academicYear || "",
+            academicYear:
+              payment?.academicYear ||
+              placement.academicYear ||
+              currentAcademicYearDoc?.label ||
+              "",
 
             paymentDate: payment?.paymentDate || null
 
@@ -270,6 +288,9 @@ const updateTransport = async (req, res) => {
       select: "name email"
     }
   });
+    const placement = updated.studentId
+      ? await resolveCurrentTransportPlacement(updated.studentId)
+      : null;
 
 return res.status(200).json({
   success: true,
@@ -279,7 +300,8 @@ return res.status(200).json({
     name: updated.studentId?.userId?.name,
     email: updated.studentId?.userId?.email,
     admissionNo: updated.studentId?.admissionNo,
-    className: formatClassName(updated.studentId?.class, updated.studentId?.section),
+    className: formatClassName(placement?.className, placement?.section),
+    academicYear: placement?.academicYear || "",
     routeName: updated.routeName,
     pickupPoint: updated.pickupPoint,
     monthlyCharge: updated.monthlyCharge,

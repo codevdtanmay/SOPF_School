@@ -6,8 +6,6 @@ const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
 const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 const WHATSAPP_API_VERSION = process.env.WHATSAPP_API_VERSION || "v25.0";
 
-console.log("WhatsApp env loaded:", Boolean(ACCESS_TOKEN && PHONE_NUMBER_ID));
-
 const normalizeWhatsAppNumber = (value) =>
   String(value || "").replace(/\D/g, "");
 
@@ -82,7 +80,7 @@ Thank you.
 
 const buildFeeReceiptText = (receipt = {}) => {
   const paidAmount = Number(receipt.amount ?? receipt.paidAmount ?? 0);
-  const dueAmount = Number(receipt.dueAmountRemaining ?? receipt.dueAmount ?? 0);
+  const dueAmount = Number(receipt.dueAmount ?? receipt.dueAmountRemaining ?? 0);
 
   return `🏫 *The School of Pansy Flowers*
 
@@ -146,8 +144,6 @@ export const sendTextMessage = async (phone, message) => {
         body: message
       }
     });
-
-    console.log("WhatsApp API response:", response.data);
 
     return {
       success: Boolean(response.data?.messages?.[0]?.id || response.status === 200),
@@ -228,8 +224,6 @@ const sendDocumentMessage = async ({
       caption
     }
   });
-
-  console.log("WhatsApp document API response:", response.data);
 
   return {
     success: Boolean(response.data?.messages?.[0]?.id || response.status === 200),
@@ -413,7 +407,7 @@ export const sendFeeReceiptPdfMessage = async ({
       summaryRows: [
         { label: "Tution Fees Master Total", value: receipt?.totalFee ?? 0, currency: true },
         { label: "Cumulative Paid Fees", value: receipt?.paidAmountTotal ?? receipt?.paidAmount ?? 0, valueColor: "#10b981", currency: true },
-        { label: "Remaining Due Fees", value: receipt?.dueAmountRemaining ?? receipt?.dueAmount ?? 0, valueColor: "#ef4444", emphasis: true, currency: true }
+        { label: "Remaining Due Fees", value: receipt?.dueAmount ?? receipt?.dueAmountRemaining ?? 0, valueColor: "#ef4444", emphasis: true, currency: true }
       ],
       footerText: "Tuition fee receipt generated automatically after payment.",
       filename: `FeeReceipt_${receiptNo || Date.now()}.pdf`

@@ -420,14 +420,26 @@ const sendFeeReceiptWhatsapp = async (req, res) => {
       : `91${student.phone.replace(/\D/g, "")}`;
 
     const paymentData = payment.toObject();
+    const feeStructureForPaymentYear = await findFeeStructureByCriteria({
+      className: payment.className,
+      section: payment.section,
+      academicYear: payment.academicYear,
+      feeStructureId: payment.feeStructureId
+    });
+    const { totalPaid: cumulativePaid } = await getStudentAnnualPayments(
+      payment.studentId?._id || payment.studentId,
+      payment.academicYear
+    );
+    const totalFee = Number(feeStructureForPaymentYear?.totalFee || student.totalFee || 0);
+    const dueAmount = Math.max(0, totalFee - cumulativePaid);
 
     const result = await sendFeeReceiptPdfMessage({
       phone,
       receipt: {
         ...paymentData,
-        totalFee: Number(student.totalFee || 0),
-        paidAmountTotal: Number(student.paidAmount || 0),
-        dueAmountRemaining: Number(student.dueAmount || 0),
+        totalFee,
+        paidAmountTotal: cumulativePaid,
+        dueAmountRemaining: dueAmount,
         category: student.category || "",
         village: student.address?.village || ""
       }
@@ -505,7 +517,7 @@ const getStudentFeeDetails = async (req, res) => {
       installments
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -540,7 +552,7 @@ const getPaymentHistory = async (req, res) => {
       history
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -601,7 +613,7 @@ const getFeeDashboard = async (_req, res) => {
       fullyPaidStudents
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -748,7 +760,7 @@ const getAllFees = async (req, res) => {
       }
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -803,7 +815,7 @@ const getMonthlyFeeReport = async (req, res) => {
       payments
     });
   } catch (error) {
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,

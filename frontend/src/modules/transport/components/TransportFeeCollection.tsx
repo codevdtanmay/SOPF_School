@@ -5,6 +5,10 @@ import Button from '../../../components/common/Button';
 import Badge from '../../../components/common/Badge';
 import { Transport } from '../types/transport.types';
 import { TransportFeePayment } from '../../../api/transportFeeApi';
+import {
+  TRANSPORT_BILLING_MONTHS,
+  getCurrentTransportBillingMonth
+} from '../utils/transportCalendar';
 
 interface Props {
   loading: boolean;
@@ -13,10 +17,8 @@ interface Props {
   onCollectFee?: (transport: Transport, month: string, year: string, amountToCollect?: number) => void;
 }
 
-const monthsList = [
-  'January','February','March','April','May','June','July','August','September','October','November','December'
-];
-const getCurrentCalendarMonth = () => monthsList[new Date().getMonth()];
+const monthsList = TRANSPORT_BILLING_MONTHS;
+const getCurrentCalendarMonth = () => getCurrentTransportBillingMonth();
 const getCurrentCalendarYear = () => String(new Date().getFullYear());
 
 const TransportFeeCollection: React.FC<Props> = ({ loading, transports, payments, onCollectFee }) => {

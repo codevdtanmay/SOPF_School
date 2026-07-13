@@ -1,6 +1,7 @@
 import teacherModel from "../models/teacherSchema.model.js";
 import userModel from "../models/userSchema.model.js";
 import bcrypt from "bcryptjs";
+import mongoose from "mongoose";
 
 // create teacher API
 
@@ -27,21 +28,31 @@ const createTeacher = async (req, res) => {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
+    const session = await mongoose.startSession();
+    let teacher;
 
-    const user = await userModel.create({
-      name,
-      email,
-      password: hashedPassword,
-      role: "teacher"
-    });
+    try {
+      await session.withTransaction(async () => {
+        const user = await userModel.create([{
+          name,
+          email,
+          password: hashedPassword,
+          role: "teacher"
+        }], { session });
 
-    const teacher = await teacherModel.create({
-      userId: user._id,
-      employeeId,
-      department,
-      qualification,
-      phone
-    });
+        const createdTeacher = await teacherModel.create([{
+          userId: user[0]._id,
+          employeeId,
+          department,
+          qualification,
+          phone
+        }], { session });
+
+        teacher = createdTeacher[0];
+      });
+    } finally {
+      await session.endSession();
+    }
 
     const populatedTeacher = await teacherModel
       .findById(teacher._id)
@@ -55,7 +66,7 @@ const createTeacher = async (req, res) => {
 
   } catch (error) {
 
-    console.log(error);
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -146,25 +157,36 @@ const updateTeacher = async (req, res) => {
       });
     }
 
-    await userModel.findByIdAndUpdate(
-      teacher.userId,
-      {
-        name,
-        email
-      }
-    );
+    const session = await mongoose.startSession();
+    let updatedTeacher;
 
-    const updatedTeacher = await teacherModel.findByIdAndUpdate(
-      id,
-      {
-        department,
-        qualification,
-        phone
-      },
-      {
-        returnDocument: "after"
-      }
-    ).populate("userId", "name email");
+    try {
+      await session.withTransaction(async () => {
+        await userModel.findByIdAndUpdate(
+          teacher.userId,
+          {
+            name,
+            email
+          },
+          { session }
+        );
+
+        updatedTeacher = await teacherModel.findByIdAndUpdate(
+          id,
+          {
+            department,
+            qualification,
+            phone
+          },
+          {
+            returnDocument: "after",
+            session
+          }
+        ).populate("userId", "name email");
+      });
+    } finally {
+      await session.endSession();
+    }
 
     return res.status(200).json({
       success: true,
@@ -173,6 +195,8 @@ const updateTeacher = async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
 
     return res.status(500).json({
       success: false,
@@ -214,6 +238,8 @@ const deleteTeacher = async (req, res) => {
     });
 
   } catch (error) {
+
+    console.error(error);
 
     return res.status(500).json({
       success: false,

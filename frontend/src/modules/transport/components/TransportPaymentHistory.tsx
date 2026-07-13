@@ -5,6 +5,7 @@ import Button from "../../../components/common/Button";
 import { TransportFeePayment } from "../../../api/transportFeeApi";
 import { formatDate } from "../../../utils/dateFormatter";
 import { exportToPrintablePDF } from "../../../utils/exportUtils";
+import { TRANSPORT_BILLING_MONTHS } from "../utils/transportCalendar";
 
 interface Props {
   loading: boolean;
@@ -21,20 +22,7 @@ type SortField =
   | "month"
   | "paidAmount"
   | "date";
-const monthsList = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
+const monthsList = TRANSPORT_BILLING_MONTHS;
 
 const formatClassName = (className?: string, section?: string) => {
   const cls = String(className || "").trim().replace(/-$/, "");
