@@ -27,6 +27,7 @@ import {
   ShieldAlert,
   Eye,
   Printer,
+  Send,
   ChevronDown,
   ChevronRight,
   
@@ -86,6 +87,28 @@ const getCurrentCalendarMonth = () => new Date().toLocaleString('en-US', { month
 const getCurrentCalendarYear = () => String(new Date().getFullYear());
 const sortAcademicYearsDesc = (a: string, b: string) =>
   b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
+
+const normalizeClassFilterLabel = (value: string) => {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^class\s+/, '');
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (['nursery', 'lkg', 'ukg'].includes(normalized)) {
+    return normalized;
+  }
+
+  const numericMatch = normalized.match(/^(\d{1,2})(st|nd|rd|th)?$/);
+  if (numericMatch) {
+    return numericMatch[1];
+  }
+
+  return normalized.replace(/\s+/g, ' ');
+};
 
 const FINANCIAL_YEAR_MONTHS = [
   'July',
@@ -364,12 +387,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [customPayAmount, setCustomPayAmount] = useState('');
   const [customPayMode, setCustomPayMode] = useState<'Cash' | 'UPI' | 'Bank Transfer'>('Cash');
   const [customPayNotes, setCustomPayNotes] = useState('');
+  const [sendingReceiptWhatsapp, setSendingReceiptWhatsapp] = useState(false);
+  const [sendingHistoryReceiptWhatsapp, setSendingHistoryReceiptWhatsapp] = useState<string | null>(null);
   const [receiptDetail, setReceiptDetail] = useState<{
     receiptNo: string;
     amount: number;
     studentName: string;
     className?: string;
     academicYear?: string;
+    month?: string;
     admissionNo?: string;
     dueAmount?: number;
     totalFee?: number;
@@ -573,6 +599,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         : preferredAcademicYear
     );
     setHistoryYear((current) =>
+      current && academicYears.some((year) => year.label === current)
+        ? current
+        : preferredAcademicYear
+    );
+    setHistoryAcademicYearFilter((current) =>
       current && academicYears.some((year) => year.label === current)
         ? current
         : preferredAcademicYear
@@ -2042,7 +2073,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const studentName = (stu.name || '').toLowerCase();
     const studentEmail = (stu.email || '').toLowerCase();
     const studentAdmission = (stu.admissionNo || stu.rollNumber || '').toLowerCase();
-    const studentClass = (stu.class || '').toLowerCase();
+    const studentClass = normalizeClassFilterLabel(stu.class || stu.currentEnrollment?.class || '');
     const studentCategory = (stu.category || '').toLowerCase();
     const studentVillage = (stu.address?.village || '').toLowerCase();
     const studentFatherName = (stu.fatherName || '').toLowerCase();
@@ -2063,7 +2094,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     const matchesClass =
       studentClassFilter === 'All' ||
-      studentClass === studentClassFilter.toLowerCase();
+      studentClass === normalizeClassFilterLabel(studentClassFilter);
 
     const matchesCategory =
       categoryFilter === 'All' ||
@@ -2147,7 +2178,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                currentTab === 'fees' ? 'Financial Center' :
                currentTab === 'fee-structure' ? 'Fee Structure Policy Matrix' :
                currentTab === 'transfer-certificates' ? 'Transfer Certificates' :
-               currentTab.toUpperCase() + ' panel'}
+               currentTab.toUpperCase()}
             </h1>
            
           </div>
@@ -2738,7 +2769,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         };
 
         // Complete the payment flow
-        const handleSavePaymentSubmit = async (e: React.FormEvent) => {
+  const handleSavePaymentSubmit = async (e: React.FormEvent) => {
           e.preventDefault();
           const amountFloat = parseFloat(customPayAmount);
           if (isNaN(amountFloat) || amountFloat <= 0) {
@@ -2785,11 +2816,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               studentName: finalStudentName,
               className: apiRes?.receiptDetail?.className || paymentClassName || activeRecord.className,
               academicYear: apiRes?.receiptDetail?.academicYear || paymentAcademicYear || activeRecord.academicYear,
+              month: apiRes?.receiptDetail?.month || CURRENT_MONTH_LABEL,
               admissionNo: apiRes?.receiptDetail?.admissionNo || activeRecord.admissionNo,
               dueAmount: apiRes?.receiptDetail?.dueAmount ?? (paymentYearRecord?.dueAmount ?? activeRecord.dueAmount),
               totalFee: apiRes?.receiptDetail?.totalFee ?? (paymentYearRecord?.totalFee ?? activeRecord.totalFee),
               paidAmount: apiRes?.receiptDetail?.paidAmount ?? (paymentYearRecord?.paidAmount ?? activeRecord.paidAmount),
-              paymentMethod: apiRes?.receiptDetail?.paymentMethod || customPayMode
+        paymentMethod: apiRes?.receiptDetail?.paymentMethod || customPayMode
             });
 
             // Log activity event in ERP list
@@ -2799,16 +2831,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               user: 'Finance Terminal 1',
               time: 'Just Now',
               type: 'fee'
-            };
-            setActivities(prev => [newSystemEvent, ...prev]);
-
-          } catch (err: any) {
-            console.error('Fees Payment API Error:', err);
-            alert(err.response?.data?.error || err.message || 'Fee transaction recording to live backend failed');
-          } finally {
-            setSubmitLoading(false);
-          }
         };
+        setActivities(prev => [newSystemEvent, ...prev]);
+
+      } catch (err: any) {
+        console.error('Fees Payment API Error:', err);
+        alert(err.response?.data?.error || err.message || 'Fee transaction recording to live backend failed');
+      } finally {
+        setSubmitLoading(false);
+      }
+    };
+
+  const handleSendFeeReceiptWhatsapp = async () => {
+    if (!receiptDetail?.receiptNo) {
+      return;
+    }
+
+    setSendingReceiptWhatsapp(true);
+    try {
+      const response = await feeApi.sendReceiptToWhatsapp(receiptDetail.receiptNo);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Failed to send fee receipt to WhatsApp');
+      }
+      alert('Fee receipt sent to WhatsApp.');
+    } catch (error: any) {
+      console.error('Failed to send fee receipt to WhatsApp:', error);
+      alert(error?.response?.data?.message || error?.message || 'Failed to send fee receipt to WhatsApp');
+    } finally {
+      setSendingReceiptWhatsapp(false);
+    }
+  };
+
+  const handleSendStoredFeeReceiptWhatsapp = async (receiptNo: string) => {
+    if (!receiptNo) {
+      return;
+    }
+
+    setSendingHistoryReceiptWhatsapp(receiptNo);
+    try {
+      const response = await feeApi.sendReceiptToWhatsapp(receiptNo);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Failed to send fee receipt to WhatsApp');
+      }
+      alert('Fee receipt sent to WhatsApp.');
+    } catch (error: any) {
+      console.error('Failed to send stored fee receipt to WhatsApp:', error);
+      alert(error?.response?.data?.message || error?.message || 'Failed to send fee receipt to WhatsApp');
+    } finally {
+      setSendingHistoryReceiptWhatsapp(null);
+    }
+  };
 
         return (
           <div className="space-y-6 animate-fadeIn select-none">
@@ -3413,23 +3485,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               
                               <button
                                 onClick={() => {
-                                  printReceiptBill({
-                                    receiptNo: item.receiptNo,
-                                    studentName: item.name,
-                                    amount: item.amount,
-                                    paymentMode: item.paymentMethod,
-                                    className: item.className,
-                                    academicYear: item.academicYear,
-                                    admissionNo: item.admissionNo,
-                                    dueAmountRemaining: item.dueAmount ?? 0,
-                                    totalFee: item.paidAmount ? item.paidAmount + (item.dueAmount || 0) : item.amount,
-                                    paidAmountTotal: item.paidAmount ?? item.amount
-                                  });
+                                    printReceiptBill({
+                                      receiptNo: item.receiptNo,
+                                      studentName: item.name,
+                                      amount: item.amount,
+                                      paymentMode: item.paymentMethod,
+                                      className: item.className,
+                                      academicYear: item.academicYear,
+                                      month: item.month,
+                                      admissionNo: item.admissionNo,
+                                      dueAmountRemaining: item.dueAmount ?? 0,
+                                      totalFee: item.paidAmount ? item.paidAmount + (item.dueAmount || 0) : item.amount,
+                                      paidAmountTotal: item.paidAmount ?? item.amount
+                                    });
                                 }}
                                 title="Print Receipt Slips"
                                 className="px-2 py-1 text-[10px] font-extrabold rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 transition-colors flex items-center gap-1 select-none active:scale-95 cursor-pointer"
                               >
                                 <span>🖨</span> <span>Print</span>
+                              </button>
+
+                              <button
+                                onClick={() => void handleSendStoredFeeReceiptWhatsapp(item.receiptNo)}
+                                disabled={sendingHistoryReceiptWhatsapp === item.receiptNo}
+                                title="Send WhatsApp Receipt"
+                                className="px-2 py-1 text-[10px] font-extrabold rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors flex items-center gap-1 select-none active:scale-95 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                              >
+                                <span>💬</span>
+                                <span>
+                                  {sendingHistoryReceiptWhatsapp === item.receiptNo ? 'Sending' : 'WhatsApp'}
+                                </span>
                               </button>
 
                               <button
@@ -3680,6 +3765,11 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                           <span className="font-extrabold text-slate-800 text-right break-words">{receiptDetail.studentName}</span>
                         </div>
 
+                        <div className="flex justify-between border-b border-slate-200 pb-2 gap-3">
+                          <span className="text-slate-400 font-semibold">Installment Month:</span>
+                          <span className="font-extrabold text-slate-800 text-right break-words">{receiptDetail.month || 'N/A'}</span>
+                        </div>
+
                         <div className="flex justify-between pt-1 gap-3">
                           <span className="text-slate-400 font-semibold">Amount Paid:</span>
                           <span className="font-black text-emerald-600 text-sm text-right">₹{(receiptDetail?.amount ?? 0).toLocaleString()}</span>
@@ -3687,6 +3777,16 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                       </div>
 
                       <div className="flex flex-col sm:flex-row gap-2 max-w-sm mx-auto pt-4 border-t border-slate-100">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          isLoading={sendingReceiptWhatsapp}
+                          leftIcon={<Send size={14} />}
+                          onClick={handleSendFeeReceiptWhatsapp}
+                          className="flex-1"
+                        >
+                          Send PDF to WhatsApp
+                        </Button>
                         <button
                           onClick={() => {
                             printReceiptBill({
@@ -3697,6 +3797,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                               className: `${receiptDetail.className || paymentTarget?.className || ''}`,
                               admissionNo: receiptDetail.admissionNo || paymentTarget?.admissionNo || '',
                               academicYear: receiptDetail.academicYear,
+                              month: receiptDetail.month,
                               dueAmountRemaining: receiptDetail.dueAmount ?? paymentTarget?.dueAmount ?? 0,
                               totalFee: receiptDetail.totalFee ?? paymentTarget?.totalFee ?? 0,
                               paidAmountTotal: receiptDetail.paidAmount ?? paymentTarget?.paidAmount ?? 0,
@@ -3718,6 +3819,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                               className: `${receiptDetail.className || paymentTarget?.className || ''}`,
                               admissionNo: receiptDetail.admissionNo || paymentTarget?.admissionNo || '',
                               academicYear: receiptDetail.academicYear,
+                              month: receiptDetail.month,
                               dueAmountRemaining: receiptDetail.dueAmount ?? paymentTarget?.dueAmount ?? 0,
                               totalFee: receiptDetail.totalFee ?? paymentTarget?.totalFee ?? 0,
                               paidAmountTotal: receiptDetail.paidAmount ?? paymentTarget?.paidAmount ?? 0,
@@ -3769,6 +3871,10 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                         <span className="text-slate-400">Class:</span>
                         <p className="text-slate-800">{selectedHistoryItem.className}</p>
                       </div>
+                      <div>
+                        <span className="text-slate-400">Installment Month:</span>
+                        <p className="text-slate-800">{selectedHistoryItem.month || 'N/A'}</p>
+                      </div>
                     </div>
                   </div>
 
@@ -3807,6 +3913,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                                     paymentMode: pay.paymentMethod,
                                     className: pay.className,
                                     academicYear: pay.academicYear,
+                                    month: pay.month,
                                     admissionNo: pay.admissionNo,
                                     dueAmountRemaining: pay.dueAmount ?? 0,
                                     totalFee: pay.paidAmount ? pay.paidAmount + (pay.dueAmount || 0) : pay.amount,
@@ -4097,7 +4204,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
           refreshTrigger={refreshTrigger} 
           assignStudentIdPreset={usesTransportPresetStudentId}
           onClearPreset={() => setUsesTransportPresetStudentId(null)}
-          activeSubTab={currentTab === 'transport' ? 'transport-students' : currentTab}
+          activeSubTab={currentTab === 'transport' ? 'transport management' : currentTab}
           setActiveSubTab={setCurrentTab}
         />
       )}

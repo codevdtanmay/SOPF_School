@@ -11,6 +11,8 @@ interface Props {
   payments: TransportFeePayment[];
   onViewReceipt: (payment: TransportFeePayment) => void;
   onPrintReceipt: (payment: TransportFeePayment) => void;
+  onSendReceiptWhatsapp: (payment: TransportFeePayment) => void;
+  sendingReceiptNo?: string | null;
 }
 type SortField =
   | "receiptNo"
@@ -34,7 +36,18 @@ const monthsList = [
   "December",
 ];
 
-const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewReceipt, onPrintReceipt }) => {
+const formatClassName = (className?: string, section?: string) => {
+  const cls = String(className || "").trim().replace(/-$/, "");
+  const sec = String(section || "").trim();
+
+  if (!cls) {
+    return "";
+  }
+
+  return sec ? `${cls}-${sec}` : cls;
+};
+
+const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewReceipt, onPrintReceipt, onSendReceiptWhatsapp, sendingReceiptNo }) => {
   const [histSearchQuery, setHistSearchQuery] = useState("");
   const [histRouteFilter, setHistRouteFilter] = useState("All");
   const [histMonthFilter, setHistMonthFilter] = useState("All");
@@ -108,7 +121,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
 
   const handleExportPaymentsExcel = () => {
     const headers = ['ReceiptNo', 'StudentName', 'AdmissionNo', 'ClassName', 'RouteName', 'Month', 'Year', 'Amount', 'PaymentMethod', 'Date'];
-    const rows = processedPayments.map(p => [p.receiptNo, p.studentName, p.admissionNo, `${p.className}${p.section ? `-${p.section}` : ''}`, p.routeName, p.month, p.year, p.paidAmount, p.paymentMethod, formatDate(p.date)]);
+    const rows = processedPayments.map(p => [p.receiptNo, p.studentName, p.admissionNo, formatClassName(p.className, p.section), p.routeName, p.month, p.year, p.paidAmount, p.paymentMethod, formatDate(p.date)]);
     const csvContent = [headers, ...rows].map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -229,7 +242,7 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
                     <td className="p-4">
                       <div>
                         <div className="font-extrabold text-slate-800">{p.studentName}</div>
-                        <div className="text-[10px] text-slate-500 font-mono">Adm: {p.admissionNo} • {p.className}{p.section ? `-${p.section}` : ''}{p.academicYear ? ` • ${p.academicYear}` : ''}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">Adm: {p.admissionNo} • {formatClassName(p.className, p.section)}{p.academicYear ? ` • ${p.academicYear}` : ''}</div>
                       </div>
                     </td>
                     <td className="p-4 font-medium text-slate-600">{p.routeName}</td>
@@ -242,6 +255,14 @@ const TransportPaymentHistory: React.FC<Props> = ({ loading, payments, onViewRec
                         <button onClick={() => onViewReceipt(p)} className="text-[10px] font-black text-blue-600 hover:text-blue-800 hover:underline cursor-pointer">View Receipt</button>
                         <span className="text-slate-300">|</span>
                         <button onClick={() => onPrintReceipt(p)} className="text-[10px] font-black text-slate-600 hover:text-slate-800 cursor-pointer">Print</button>
+                        <span className="text-slate-300">|</span>
+                        <button
+                          onClick={() => onSendReceiptWhatsapp(p)}
+                          disabled={sendingReceiptNo === p.receiptNo}
+                          className="text-[10px] font-black text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
+                        >
+                          {sendingReceiptNo === p.receiptNo ? 'Sending' : 'WhatsApp'}
+                        </button>
                       </div>
                     </td>
                   </tr>

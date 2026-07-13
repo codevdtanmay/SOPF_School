@@ -173,5 +173,10 @@ export const transportFeeApi = {
     );
 
     return response.data.pending || [];
+  },
+
+  sendReceiptToWhatsapp: async (receiptNo: string) => {
+    const response = await axiosInstance.post(`/transport-fees/${receiptNo}/whatsapp`);
+    return response.data;
   }
 };

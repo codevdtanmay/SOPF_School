@@ -13,6 +13,12 @@ router.post(
   authorize("admin"),
   transportPaymentController.collectTransportFee
 );
+router.post(
+  "/:receiptNo/whatsapp",
+  authMiddleware,
+  authorize("admin"),
+  transportPaymentController.sendTransportFeeReceiptWhatsapp
+);
 
 // Payment History
 router.get(

@@ -6,6 +6,7 @@ import {
   FileCheck,
   FileSpreadsheet,
   Printer,
+  Send,
   Route as RouteIcon,
   TrendingUp,
   Users
@@ -133,6 +134,8 @@ const [routeError, setRouteError] = useState("");
 
   const [collectLoading, setCollectLoading] = useState(false);
   const [collectSuccessMessage, setCollectSuccessMessage] = useState('');
+  const [sendingReceiptWhatsapp, setSendingReceiptWhatsapp] = useState(false);
+  const [sendingHistoryReceiptWhatsapp, setSendingHistoryReceiptWhatsapp] = useState<string | null>(null);
 
   const [reportType, setReportType] = useState<ReportType>('monthly');
   const [currentCalendarMonth, setCurrentCalendarMonth] = useState(getCurrentCalendarMonth);
@@ -590,6 +593,46 @@ const loadRouteReport = useCallback(
       setCollectLoading(false);
     }
   };
+
+  const handleSendTransportReceiptWhatsapp = useCallback(async () => {
+    if (!activeReceipt?.receiptNo) {
+      return;
+    }
+
+    setSendingReceiptWhatsapp(true);
+    try {
+      const response = await transportFeeApi.sendReceiptToWhatsapp(activeReceipt.receiptNo);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Failed to send transport receipt to WhatsApp');
+      }
+      alert('Transport receipt sent to WhatsApp.');
+    } catch (error: any) {
+      console.error('Failed to send transport receipt to WhatsApp:', error);
+      alert(error?.response?.data?.message || error?.message || 'Failed to send transport receipt to WhatsApp');
+    } finally {
+      setSendingReceiptWhatsapp(false);
+    }
+  }, [activeReceipt]);
+
+  const handleSendStoredTransportReceiptWhatsapp = useCallback(async (receiptNo: string) => {
+    if (!receiptNo) {
+      return;
+    }
+
+    setSendingHistoryReceiptWhatsapp(receiptNo);
+    try {
+      const response = await transportFeeApi.sendReceiptToWhatsapp(receiptNo);
+      if (!response?.success) {
+        throw new Error(response?.message || 'Failed to send transport receipt to WhatsApp');
+      }
+      alert('Transport receipt sent to WhatsApp.');
+    } catch (error: any) {
+      console.error('Failed to send stored transport receipt to WhatsApp:', error);
+      alert(error?.response?.data?.message || error?.message || 'Failed to send transport receipt to WhatsApp');
+    } finally {
+      setSendingHistoryReceiptWhatsapp(null);
+    }
+  }, []);
 
   const triggerPrintReceipt = (receipt: TransportFeePayment) => {
     const printWindow = window.open('', '_blank');
@@ -1236,6 +1279,8 @@ const collections = chartMonths.map((month, index) =>
             setIsReceiptOpen(true);
           }}
           onPrintReceipt={triggerPrintReceipt}
+          onSendReceiptWhatsapp={(payment) => void handleSendStoredTransportReceiptWhatsapp(payment.receiptNo)}
+          sendingReceiptNo={sendingHistoryReceiptWhatsapp}
         />
       )}
 
@@ -1260,6 +1305,15 @@ const collections = chartMonths.map((month, index) =>
         title="Transport Receipt View"
         footer={
           <div className="flex w-full justify-between">
+            <Button
+              variant="secondary"
+              size="sm"
+              isLoading={sendingReceiptWhatsapp}
+              leftIcon={<Send size={14} />}
+              onClick={() => void handleSendTransportReceiptWhatsapp()}
+            >
+              Send PDF to WhatsApp
+            </Button>
             <Button
               variant="outline"
               size="sm"

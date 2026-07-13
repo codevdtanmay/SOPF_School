@@ -14,6 +14,7 @@ export interface FeeHistoryItem {
   name: string;
   admissionNo: string;
   className: string;
+  month?: string;
   section?: string;
   academicYear?: string;
   amount: number;
@@ -32,6 +33,7 @@ const mapPaymentResponse = (p: any): FeeHistoryItem => {
     name: p.studentName || p.studentId?.userId?.name || p.name,
     admissionNo: p.admissionNo || p.studentId?.admissionNo,
     className: p.className || p.studentId?.class || '',
+    month: p.month || '',
     section: p.section || p.studentId?.section || '',
     academicYear: p.academicYear || p.studentId?.academicYear || '',
     amount: Number(p.amount ?? p.paidAmount ?? 0),
@@ -170,5 +172,10 @@ const currentYear = currentDate.getFullYear();
           ? history.length
           : totalPayments || history.length
     };
+  },
+
+  sendReceiptToWhatsapp: async (receiptNo: string) => {
+    const response = await axiosInstance.post(`/fees/${receiptNo}/whatsapp`);
+    return response.data;
   }
 };

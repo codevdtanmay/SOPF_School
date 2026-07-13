@@ -39,10 +39,10 @@ const CLASS_ORDER = [
   '7th',
   '8th',
   '9th',
-  '10th',
-  '11th',
-  '12th'
+  '10th'
 ];
+
+const PASSED_OUT_CLASS = 'Passed Out';
 
 const sortAcademicYearsDesc = (a: string, b: string) =>
   b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
@@ -50,11 +50,44 @@ const sortAcademicYearsDesc = (a: string, b: string) =>
 const normalizeClassLabel = (value?: string) =>
   String(value || '').trim().replace(/\s+/g, ' ');
 
+const normalizeClassLookup = (value?: string) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^class\s+/, '')
+    .replace(/\s+/g, ' ');
+
+const formatClassDisplay = (value?: string) => {
+  const normalized = normalizeClassLookup(value);
+
+  if (!normalized) {
+    return '';
+  }
+
+  if (normalized === PASSED_OUT_CLASS.toLowerCase()) {
+    return PASSED_OUT_CLASS;
+  }
+
+  if (['nursery', 'lkg', 'ukg'].includes(normalized)) {
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  const numericMatch = normalized.match(/^(\d{1,2})(st|nd|rd|th)?$/);
+  if (numericMatch) {
+    return `Class ${numericMatch[1]}${numericMatch[2] || ''}`;
+  }
+
+  return value?.trim() || normalized;
+};
+
 const normalizeAcademicYear = (value?: string) =>
   String(value || '').trim().replace(/\s+/g, ' ');
 
 const classSortValue = (value: string) => {
-  const normalized = normalizeClassLabel(value).toLowerCase();
+  const normalized = normalizeClassLookup(value);
+  if (normalized === PASSED_OUT_CLASS.toLowerCase()) {
+    return CLASS_ORDER.length + 10;
+  }
   const directIndex = CLASS_ORDER.findIndex((item) => item.toLowerCase() === normalized);
   if (directIndex >= 0) {
     return directIndex;
@@ -68,6 +101,22 @@ const classSortValue = (value: string) => {
   return 1000;
 };
 
+const getNextClassLabel = (className: string) => {
+  const normalized = normalizeClassLookup(className);
+  const currentIndex = CLASS_ORDER.findIndex((item) => item.toLowerCase() === normalized);
+
+  if (currentIndex < 0) {
+    return '';
+  }
+
+  if (currentIndex === CLASS_ORDER.length - 1) {
+    return PASSED_OUT_CLASS;
+  }
+
+  const next = CLASS_ORDER[currentIndex + 1] || '';
+  return next ? `Class ${next}` : '';
+};
+
 export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
   isOpen,
   onClose,
@@ -76,13 +125,15 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
   currentUserName = '',
   onSuccess
 }) => {
+  const [sourceStudents, setSourceStudents] = useState<Student[]>(students);
+  const [rosterLoading, setRosterLoading] = useState(false);
   const academicYearOptions = useMemo(
     () => Array.from(new Set(academicYears.filter(Boolean))).sort(sortAcademicYearsDesc),
     [academicYears]
   );
 
   const classOptions = useMemo(() => {
-    const roster = students;
+    const roster = sourceStudents.length > 0 ? sourceStudents : students;
     const map = new Map<string, { className: string; section: string; academicYear: string }>();
 
     roster.forEach((student) => {
@@ -103,19 +154,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
       if (classDiff !== 0) return classDiff;
       return a.section.localeCompare(b.section, undefined, { numeric: true, sensitivity: 'base' });
     });
-  }, [students]);
-
-  const destinationClassOptions = useMemo(() => {
-    const uniqueClasses = Array.from(
-      new Set(
-        students
-          .map((student) => normalizeClassLabel(student.class))
-          .filter(Boolean)
-      )
-    );
-
-    return uniqueClasses.sort((a, b) => classSortValue(a) - classSortValue(b));
-  }, [students]);
+  }, [sourceStudents, students]);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [currentAcademicYear, setCurrentAcademicYear] = useState('');
@@ -145,10 +184,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
     const initialDestinationYear = academicYearOptions.find((year) => year !== initialAcademicYear)
       || academicYearOptions[0]
       || '';
-    const currentClassIndex = CLASS_ORDER.findIndex(
-      (item) => item.toLowerCase() === normalizeClassLabel(initialClass?.className).toLowerCase()
-    );
-    const nextClass = currentClassIndex >= 0 ? CLASS_ORDER[currentClassIndex + 1] || CLASS_ORDER[currentClassIndex] : (destinationClassOptions[0] || '');
+    const nextClass = getNextClassLabel(initialClass?.className || '') || '';
 
     setStep(1);
     setPromotionMode('entire');
@@ -166,19 +202,74 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
     setShowConfirm(false);
     setSubmitting(false);
     setError('');
-  }, [academicYearOptions, classOptions, destinationClassOptions, isOpen]);
+  }, [academicYearOptions, classOptions, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !currentAcademicYear) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadSourceStudents = async () => {
+      setRosterLoading(true);
+      try {
+        const response = await studentApi.getStudents({
+          limit: 1000,
+          academicYear: currentAcademicYear
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        setSourceStudents(Array.isArray(response.students) ? response.students : []);
+      } catch (error) {
+        if (!cancelled) {
+          setSourceStudents(students);
+        }
+      } finally {
+        if (!cancelled) {
+          setRosterLoading(false);
+        }
+      }
+    };
+
+    void loadSourceStudents();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentAcademicYear, isOpen, students]);
+
+  useEffect(() => {
+    if (!currentClass) {
+      return;
+    }
+
+    const nextClass = getNextClassLabel(currentClass);
+    if (nextClass) {
+      setDestinationClass(nextClass);
+    }
+  }, [currentClass]);
+
+  const destinationClassOptions = useMemo(() => {
+    const nextClass = getNextClassLabel(currentClass);
+    return nextClass ? [nextClass] : [];
+  }, [currentClass]);
 
   const currentRoster = useMemo(() => {
-    return students.filter((student) => {
-      const classMatches = normalizeClassLabel(student.class).toLowerCase() === currentClass.toLowerCase();
+    const roster = sourceStudents.length > 0 ? sourceStudents : students;
+    return roster.filter((student) => {
+      const classMatches = normalizeClassLookup(student.class) === normalizeClassLookup(currentClass);
       const academicYearMatches = normalizeAcademicYear(student.academicYear) === currentAcademicYear;
       const sectionMatches = currentSection
-        ? normalizeClassLabel(student.section).toLowerCase() === currentSection.toLowerCase()
+        ? normalizeClassLookup(student.section) === normalizeClassLookup(currentSection)
         : true;
 
       return classMatches && academicYearMatches && sectionMatches;
     });
-  }, [students, currentAcademicYear, currentClass, currentSection]);
+  }, [sourceStudents, students, currentAcademicYear, currentClass, currentSection]);
 
   const visibleRoster = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -191,7 +282,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
         String(student.rollNo || '').toLowerCase().includes(query);
 
       const matchesSection =
-        sectionFilter === 'All' || normalizeClassLabel(student.section).toLowerCase() === sectionFilter.toLowerCase();
+        sectionFilter === 'All' || normalizeClassLookup(student.section) === normalizeClassLookup(sectionFilter);
 
       const matchesStatus =
         statusFilter === 'All' || (student.lifecycleStatus || 'Active') === statusFilter;
@@ -242,8 +333,8 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
     }
   }, [currentRoster, promotionMode]);
 
-  const currentClassLabel = currentClass ? `${currentClass}${currentSection ? `-${currentSection}` : ''}` : 'Not selected';
-  const destinationClassLabel = destinationClass ? `${destinationClass}${destinationSection ? `-${destinationSection}` : ''}` : 'Not selected';
+  const currentClassLabel = currentClass ? `${formatClassDisplay(currentClass)}${currentSection ? `-${currentSection}` : ''}` : 'Not selected';
+  const destinationClassLabel = destinationClass ? `${formatClassDisplay(destinationClass)}${destinationSection ? `-${destinationSection}` : ''}` : 'Not selected';
   const studentsSelectedCount = promotionMode === 'entire' ? activeCurrentRoster.length : selectedVisibleCount;
 
   const canContinue = Boolean(
@@ -417,7 +508,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
                   >
                     {classOptions.map((option) => (
                       <option key={`${option.academicYear}-${option.className}-${option.section}`} value={`${option.className}||${option.section}`}>
-                        {option.className}{option.section ? ` - ${option.section}` : ''}
+                    {option.className}{option.section ? ` - ${option.section}` : ''}
                       </option>
                     ))}
                   </select>
@@ -446,9 +537,21 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
 
               <div className="flex items-center justify-between gap-3 pt-2">
                 <p className="text-xs font-semibold text-slate-500">
-                  Promotion updates only class, section, and academic year. Fees, transport, and historical records remain unchanged.
+                  Promotion creates a new enrollment for the destination year. The previous enrollment stays in academic history.
                 </p>
                 <Button onClick={handleContinue} disabled={!canContinue}>Continue</Button>
+              </div>
+
+              <div className="rounded-xl border border-blue-100 bg-blue-50/60 px-4 py-3 text-xs text-blue-900">
+                <p className="font-extrabold uppercase tracking-wider text-[10px] text-blue-500">Academic History</p>
+                    <p className="mt-1 font-semibold">
+                  {currentClass ? `${currentClassLabel} is preserved as the source year record.` : 'Select a class to preview the promotion trail.'}
+                    </p>
+                    <p className="mt-1 text-blue-700/80">
+                  {destinationClass === PASSED_OUT_CLASS
+                    ? 'Class 10 students are moved to Passed Out and marked as alumni.'
+                    : 'The destination year receives a fresh enrollment record for the promoted class.'}
+                </p>
               </div>
             </div>
 
@@ -565,6 +668,9 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
                   <p className="text-sm font-extrabold text-slate-900">Student Roster</p>
                   <Badge variant="slate" size="sm">{visibleRoster.length} visible</Badge>
                 </div>
+                {rosterLoading && (
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Loading roster...</span>
+                )}
                 {promotionMode === 'selective' && (
                   <Button variant="secondary" size="sm" onClick={handleSelectAllVisible}>
                     Select Visible Active

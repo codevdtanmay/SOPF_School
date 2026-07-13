@@ -11,6 +11,12 @@ router.post(
   authorize("admin"),
   feeController.collectFee
 );
+router.post(
+  "/:receiptNo/whatsapp",
+  authMiddleware,
+  authorize("admin"),
+  feeController.sendFeeReceiptWhatsapp
+);
 router.get(
   "/student/:id",
   authMiddleware,

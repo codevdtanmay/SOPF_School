@@ -1,6 +1,7 @@
 import transportPaymentModel from "../models/transportPayment.model.js";
 import transportModel from "../models/transport.model.js";
 import studentModel from "../models/student.model.js";
+import { sendTransportReceiptMessage } from "../services/whatsapp.service.js";
 import {
   buildTransportPaymentSnapshot,
   normalizeAcademicYear
@@ -148,17 +149,114 @@ const collectTransportFee = async (req, res) => {
       }
     ]);
 
+    const paymentPayload = payment.toObject();
+    const normalizedPhone = String(student.phone || "").replace(/\D/g, "");
+    const recipientPhone = normalizedPhone
+      ? (normalizedPhone.startsWith("91") ? normalizedPhone : `91${normalizedPhone}`)
+      : "";
+
+    if (recipientPhone) {
+      res.once("finish", () => {
+        void sendTransportReceiptMessage({
+          phone: recipientPhone,
+          receipt: {
+            ...paymentPayload,
+            paymentId: paymentPayload._id?.toString?.() || String(paymentPayload._id)
+          }
+        });
+      });
+    }
+
     return res.status(201).json({
       success: true,
       message: "Transport fee collected successfully",
       payment: {
-        ...payment.toObject(),
+        ...paymentPayload,
         currentPaidAmount: paidNow
       }
     });
 
   } catch (error) {
     console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error"
+    });
+  }
+};
+
+const sendTransportFeeReceiptWhatsapp = async (req, res) => {
+  try {
+    const { receiptNo } = req.params;
+
+    if (!receiptNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Receipt number is required"
+      });
+    }
+
+    const payment = await transportPaymentModel
+      .findOne({ receiptNo })
+      .populate({
+        path: "studentId",
+        populate: {
+          path: "userId",
+          select: "name email"
+        }
+      })
+      .populate("transportId");
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Transport payment not found"
+      });
+    }
+
+    const student = payment.studentId?._id
+      ? payment.studentId
+      : await studentModel.findById(payment.studentId).populate("userId", "name email");
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+
+    if (!student.phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Student phone number is missing"
+      });
+    }
+
+    const normalizedPhone = String(student.phone || "").replace(/\D/g, "");
+    const phone = normalizedPhone.startsWith("91") ? normalizedPhone : `91${normalizedPhone}`;
+
+    const result = await sendTransportReceiptMessage({
+      phone,
+      receipt: {
+        ...payment.toObject()
+      }
+    });
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send transport receipt to WhatsApp",
+        error: result.error || null
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Transport receipt sent to WhatsApp successfully"
+    });
+  } catch (error) {
+    console.error("Transport receipt WhatsApp error:", error);
 
     return res.status(500).json({
       success: false,
@@ -487,6 +585,7 @@ const getRouteReport = async (req, res) => {
 export default {
 
   collectTransportFee,
+  sendTransportFeeReceiptWhatsapp,
 
   getPaymentHistory,
 

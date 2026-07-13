@@ -265,6 +265,7 @@ export const printReceiptBill = (receipt: {
   className: string;
   section?: string;
   academicYear?: string;
+  month?: string;
   admissionNo: string;
   dueAmountRemaining: number;
   totalFee: number;
@@ -456,7 +457,7 @@ export const printReceiptBill = (receipt: {
             <div class="brand-header">
               <h1 class="brand-logo-txt">The School of Pansy Flowers</h1>
               <div class="brand-sub">Changotola, Balaghat, MP, India • Since 2011</div>
-              <div><span class="receipt-title-box">Tuition Settlement Receipt</span></div>
+              <div><span class="receipt-title-box">Fee Settlement Receipt</span></div>
             </div>
 
             <div class="bill-details">
@@ -484,6 +485,12 @@ export const printReceiptBill = (receipt: {
               <div class="row-item">
                 <span class="row-lbl">Academic Year:</span>
                 <span class="row-val">${receipt.academicYear}</span>
+              </div>
+              ` : ''}
+              ${receipt.month ? `
+              <div class="row-item">
+                <span class="row-lbl">Installment Month:</span>
+                <span class="row-val">${receipt.month}</span>
               </div>
               ` : ''}
               </div>

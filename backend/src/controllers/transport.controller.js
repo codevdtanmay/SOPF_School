@@ -2,6 +2,17 @@ import transportModel from "../models/transport.model.js";
 import studentModel from "../models/student.model.js";
 import transportPaymentModel from "../models/transportPayment.model.js";
 
+const formatClassName = (className = "", section = "") => {
+  const cls = String(className || "").trim();
+  const sec = String(section || "").trim();
+
+  if (!cls) {
+    return "";
+  }
+
+  return sec ? `${cls}-${sec}` : cls;
+};
+
 const parseMonthlyCharge = (value) => {
   const numericValue = Number(value);
 
@@ -75,7 +86,7 @@ const addTransport = async (req, res) => {
         name: populatedTransport.studentId?.userId?.name,
         email: populatedTransport.studentId?.userId?.email,
         admissionNo: populatedTransport.studentId?.admissionNo,
-        className: `${populatedTransport.studentId?.class}-${populatedTransport.studentId?.section}`,
+        className: formatClassName(populatedTransport.studentId?.class, populatedTransport.studentId?.section),
         routeName: populatedTransport.routeName,
         pickupPoint: populatedTransport.pickupPoint,
         monthlyCharge: populatedTransport.monthlyCharge,
@@ -133,8 +144,8 @@ const getAllTransportStudents = async (req, res) => {
             admissionNo: transport.studentId?.admissionNo,
 
             className: payment?.className
-              ? `${payment.className}${payment.section ? `-${payment.section}` : ""}`
-              : `${transport.studentId?.class}-${transport.studentId?.section}`,
+              ? formatClassName(payment.className, payment.section)
+              : formatClassName(transport.studentId?.class, transport.studentId?.section),
 
             routeName: transport.routeName,
 
@@ -268,7 +279,7 @@ return res.status(200).json({
     name: updated.studentId?.userId?.name,
     email: updated.studentId?.userId?.email,
     admissionNo: updated.studentId?.admissionNo,
-    className: `${updated.studentId?.class}-${updated.studentId?.section}`,
+    className: formatClassName(updated.studentId?.class, updated.studentId?.section),
     routeName: updated.routeName,
     pickupPoint: updated.pickupPoint,
     monthlyCharge: updated.monthlyCharge,

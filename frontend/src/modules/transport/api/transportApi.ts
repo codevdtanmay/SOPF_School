@@ -36,6 +36,17 @@ const reverseMonthMap: Record<number, string> = {
   12: "December"
 };
 
+const formatClassName = (className?: string, section?: string) => {
+  const cls = String(className || "").trim().replace(/-$/, "");
+  const sec = String(section || "").trim();
+
+  if (!cls) {
+    return "";
+  }
+
+  return sec ? `${cls}-${sec}` : cls;
+};
+
 const mapTransport = (t: any): Transport => ({
   id: t.id || t._id,
 
@@ -45,7 +56,7 @@ const mapTransport = (t: any): Transport => ({
 
   admissionNo: t.admissionNo,
 
-  className: t.className,
+  className: formatClassName(t.className, t.section),
 
   routeName: t.routeName,
 
@@ -74,7 +85,7 @@ const mapPayment = (p: any): TransportPayment => ({
 
   admissionNo: p.admissionNo || p.studentId?.admissionNo,
 
-  className: p.className || p.studentId?.class,
+  className: formatClassName(p.className || p.studentId?.class, p.section || p.studentId?.section),
 
   section: p.section || p.studentId?.section,
 
@@ -262,6 +273,12 @@ export const transportApi = {
       );
 
     return res.data.pending || [];
+
+  },
+
+  sendReceiptToWhatsapp: async (receiptNo: string) => {
+    const response = await axiosInstance.post(`/transport-fees/${receiptNo}/whatsapp`);
+    return response.data;
 
   }
 

@@ -107,6 +107,14 @@ const MONTH_SEQUENCE = [
   "March"
 ];
 
+const matchesNormalizedClass = (value, filter) =>
+  !String(filter || "").trim() ||
+  normalizeClassLabel(value) === normalizeClassLabel(filter);
+
+const matchesNormalizedSection = (value, filter) =>
+  !String(filter || "").trim() ||
+  normalizeSectionLabel(value) === normalizeSectionLabel(filter);
+
 const buildMonthlyInstallments = (payments = []) => {
   const groupedPayments = payments.reduce((acc, payment) => {
     const month = String(payment.month || "").trim();
@@ -503,14 +511,6 @@ const getStudents = async (req, res) => {
         isDeleted: false
       };
 
-      if (studentClass) {
-        filter.class = studentClass;
-      }
-
-      if (section) {
-        filter.section = section;
-      }
-
       if (academicYearDoc?.label) {
         filter.academicYear = academicYearDoc.label;
       }
@@ -558,14 +558,6 @@ const getStudents = async (req, res) => {
         status: "active"
       };
 
-      if (studentClass) {
-        enrollmentFilter.class = studentClass;
-      }
-
-      if (section) {
-        enrollmentFilter.section = section;
-      }
-
       const enrollments = await enrollmentModel
         .find(enrollmentFilter)
         .populate({
@@ -587,30 +579,6 @@ const getStudents = async (req, res) => {
       results = enrollments
         .filter((enrollment) => enrollment.student)
         .map((enrollment) => mergeStudent(enrollment.student, enrollment));
-
-      if (search) {
-        const searchText = String(search).trim().toLowerCase();
-        results = results.filter((student) => {
-          const searchHit =
-            student.userId?.name?.toLowerCase().includes(searchText) ||
-            student.userId?.email?.toLowerCase().includes(searchText) ||
-            student.admissionNo?.toLowerCase().includes(searchText) ||
-            String(student.rollNo || "").includes(searchText) ||
-            String(student.class || "").toLowerCase().includes(searchText) ||
-            String(student.section || "").toLowerCase().includes(searchText) ||
-            String(student.category || "").toLowerCase().includes(searchText) ||
-            String(student.fatherName || "").toLowerCase().includes(searchText) ||
-            String(student.motherName || "").toLowerCase().includes(searchText) ||
-            String(student.phone || "").toLowerCase().includes(searchText) ||
-            String(student.aadharNo || "").toLowerCase().includes(searchText) ||
-            String(student.samagraId || "").toLowerCase().includes(searchText) ||
-            String(student.apaarId || "").toLowerCase().includes(searchText) ||
-            String(student.panNo || "").toLowerCase().includes(searchText) ||
-            String(student.address?.village || "").toLowerCase().includes(searchText);
-
-          return searchHit;
-        });
-      }
     } else {
       const legacyFilter = buildLegacyFilter();
       const legacyStudents = await studentModel
@@ -618,6 +586,38 @@ const getStudents = async (req, res) => {
         .populate("userId", "name email");
 
       results = legacyStudents.map((student) => mergeStudent(student, null));
+    }
+
+    if (studentClass) {
+      results = results.filter((student) => matchesNormalizedClass(student.class, studentClass));
+    }
+
+    if (section) {
+      results = results.filter((student) => matchesNormalizedSection(student.section, section));
+    }
+
+    if (search) {
+      const searchText = String(search).trim().toLowerCase();
+      results = results.filter((student) => {
+        const searchHit =
+          student.userId?.name?.toLowerCase().includes(searchText) ||
+          student.userId?.email?.toLowerCase().includes(searchText) ||
+          student.admissionNo?.toLowerCase().includes(searchText) ||
+          String(student.rollNo || "").includes(searchText) ||
+          String(student.class || "").toLowerCase().includes(searchText) ||
+          String(student.section || "").toLowerCase().includes(searchText) ||
+          String(student.category || "").toLowerCase().includes(searchText) ||
+          String(student.fatherName || "").toLowerCase().includes(searchText) ||
+          String(student.motherName || "").toLowerCase().includes(searchText) ||
+          String(student.phone || "").toLowerCase().includes(searchText) ||
+          String(student.aadharNo || "").toLowerCase().includes(searchText) ||
+          String(student.samagraId || "").toLowerCase().includes(searchText) ||
+          String(student.apaarId || "").toLowerCase().includes(searchText) ||
+          String(student.panNo || "").toLowerCase().includes(searchText) ||
+          String(student.address?.village || "").toLowerCase().includes(searchText);
+
+        return searchHit;
+      });
     }
 
     const sortedResults = results.sort((a, b) => {
@@ -958,6 +958,9 @@ const promoteStudents = async (req, res) => {
     const normalizedCurrentSection = String(currentSection || "").trim();
     const normalizedDestinationClass = String(destinationClass || "").trim();
     const normalizedDestinationSection = String(destinationSection || "").trim();
+    const normalizedPassedOutClass = normalizeClassLabel("Passed Out");
+    const isPassedOutPromotion =
+      normalizeClassLabel(normalizedDestinationClass) === normalizedPassedOutClass;
 
     if (
       !normalizedCurrentAcademicYear ||
@@ -1113,12 +1116,6 @@ const promoteStudents = async (req, res) => {
             promotedFrom: enrollment._id
           }], { session: promotionSession });
 
-          await enrollmentModel.updateOne(
-            { _id: enrollment._id },
-            { $set: { status: "promoted" } },
-            { session: promotionSession }
-          );
-
           await promotionHistoryModel.create([{
             studentId: student._id,
             promotedBy: req.user.id,
@@ -1140,7 +1137,8 @@ const promoteStudents = async (req, res) => {
             oldClass: enrollment.class,
             newClass: normalizedDestinationClass,
             oldAcademicYear: normalizedCurrentAcademicYear,
-            newAcademicYear: normalizedDestinationAcademicYear
+            newAcademicYear: normalizedDestinationAcademicYear,
+            isPassedOut: isPassedOutPromotion
           });
         }
       });
@@ -1188,6 +1186,7 @@ const updatebyId = async (req, res) => {
       email,
 
       class: studentClass,
+      section,
       rollNo,
       academicYear,
       lifecycleStatus,
@@ -1228,15 +1227,33 @@ const updatebyId = async (req, res) => {
       
     });
 
+    const normalizedAcademicYear = normalizeAcademicSession(academicYear) || student.academicYear || "";
+    const normalizedSection = section === undefined || section === null
+      ? String(student.section || "").trim()
+      : String(section || "").trim();
+    const normalizedClass = String(studentClass || "").trim();
     let feeStructure = null;
 
-    if (student.class !== studentClass || student.academicYear !== academicYear) {
-      feeStructure = await findMatchingFeeStructure(studentClass, academicYear);
+    if (student.class !== normalizedClass || normalizeAcademicSession(student.academicYear) !== normalizedAcademicYear) {
+      feeStructure = await findMatchingFeeStructure(normalizedClass, normalizedAcademicYear);
 
     }
 
+    let academicYearDoc = null;
+
+    if (normalizedAcademicYear) {
+      academicYearDoc = await academicYearModel.findOne(
+        resolveAcademicYearQuery(normalizedAcademicYear)
+      );
+    }
+
+    if (normalizedAcademicYear && !academicYearDoc) {
+      academicYearDoc = await getCurrentAcademicYearDoc();
+    }
+
     const updatePayload = {
-      class: studentClass,
+      class: normalizedClass,
+      section: normalizedSection,
       rollNo,
 
       fatherName,
@@ -1249,7 +1266,7 @@ const updatebyId = async (req, res) => {
 
       category,
 
-      academicYear: normalizeAcademicSession(academicYear) || student.academicYear,
+      academicYear: normalizedAcademicYear || student.academicYear,
 
       aadharNo,
       samagraId,
@@ -1272,13 +1289,55 @@ const updatebyId = async (req, res) => {
       })
     };
 
-    const updatedStudent = await studentModel.findByIdAndUpdate(
-      id,
-      updatePayload,
-      {
-        returnDocument: "after"
-      }
-    ).populate("userId", "name email");
+    const session = await mongoose.startSession();
+
+    let updatedStudent;
+
+    try {
+      await session.withTransaction(async () => {
+        if (academicYearDoc) {
+          const existingEnrollment = await enrollmentModel.findOne({
+            student: student._id,
+            academicYear: academicYearDoc._id
+          }).session(session);
+
+          const enrollmentPayload = {
+            student: student._id,
+            academicYear: academicYearDoc._id,
+            class: normalizedClass || student.class,
+            section: normalizedSection,
+            rollNo: rollNo != null && rollNo !== "" ? Number(rollNo) : null,
+            status: "active"
+          };
+
+          if (existingEnrollment) {
+            await enrollmentModel.updateOne(
+              { _id: existingEnrollment._id },
+              { $set: enrollmentPayload },
+              { session }
+            );
+          } else {
+            await enrollmentModel.create([enrollmentPayload], { session });
+          }
+        }
+
+        await studentModel.findByIdAndUpdate(
+          id,
+          updatePayload,
+          {
+            returnDocument: "after",
+            session
+          }
+        );
+
+        updatedStudent = await studentModel
+          .findById(id)
+          .populate("userId", "name email")
+          .session(session);
+      });
+    } finally {
+      await session.endSession();
+    }
 
     return res.status(200).json({
       success: true,

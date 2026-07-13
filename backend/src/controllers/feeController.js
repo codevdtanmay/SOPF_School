@@ -5,7 +5,7 @@ import academicYearModel from "../models/academicYear.model.js";
 import enrollmentModel from "../models/enrollment.model.js";
 import mongoose from "mongoose";
 import computeInstallmentDetails from "../utils/installmentCalculator.js";
-import { sendFeeReceiptMessage } from "../services/whatsapp.service.js"
+import { sendFeeReceiptMessage, sendFeeReceiptPdfMessage } from "../services/whatsapp.service.js"
 import {
   buildFeePaymentSnapshot,
   currentMonthLabel,
@@ -369,6 +369,92 @@ try {
   }
 };
 
+const sendFeeReceiptWhatsapp = async (req, res) => {
+  try {
+    const { receiptNo } = req.params;
+
+    if (!receiptNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Receipt number is required"
+      });
+    }
+
+    const payment = await feePaymentModel
+      .findOne({ receiptNo })
+      .populate({
+        path: "studentId",
+        populate: {
+          path: "userId",
+          select: "name email"
+        }
+      });
+
+    if (!payment) {
+      return res.status(404).json({
+        success: false,
+        message: "Fee payment not found"
+      });
+    }
+
+    const student = payment.studentId?._id
+      ? payment.studentId
+      : await studentModel.findById(payment.studentId).populate("userId", "name email");
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+
+    if (!student.phone) {
+      return res.status(400).json({
+        success: false,
+        message: "Student phone number is missing"
+      });
+    }
+
+    const phone = student.phone.replace(/\D/g, "").startsWith("91")
+      ? student.phone.replace(/\D/g, "")
+      : `91${student.phone.replace(/\D/g, "")}`;
+
+    const paymentData = payment.toObject();
+
+    const result = await sendFeeReceiptPdfMessage({
+      phone,
+      receipt: {
+        ...paymentData,
+        totalFee: Number(student.totalFee || 0),
+        paidAmountTotal: Number(student.paidAmount || 0),
+        dueAmountRemaining: Number(student.dueAmount || 0),
+        category: student.category || "",
+        village: student.address?.village || ""
+      }
+    });
+
+    if (!result.success) {
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send fee receipt to WhatsApp",
+        error: result.error || null
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Fee receipt sent to WhatsApp successfully"
+    });
+  } catch (error) {
+    console.error("Fee receipt WhatsApp error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error"
+    });
+  }
+};
+
 const getStudentFeeDetails = async (req, res) => {
   try {
     const { id } = req.params;
@@ -554,7 +640,6 @@ const getAllFees = async (req, res) => {
     }
 
     const enrollmentQuery = {
-      status: "active",
       ...(academicYearDoc ? { academicYear: academicYearDoc._id } : {})
     };
 
@@ -623,6 +708,7 @@ const getAllFees = async (req, res) => {
           paidAmount: payment.paidAmount,
           dueAmount: payment.dueAmount,
           paymentMethod: payment.paymentMethod,
+          month: payment.month,
           className: payment.className,
           section: payment.section,
           academicYear: payment.academicYear
@@ -728,6 +814,7 @@ const getMonthlyFeeReport = async (req, res) => {
 
 export default {
   collectFee,
+  sendFeeReceiptWhatsapp,
   getStudentFeeDetails,
   getPaymentHistory,
   getFeeDashboard,

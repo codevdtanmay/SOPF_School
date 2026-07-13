@@ -325,9 +325,16 @@ return counts;
     }
   },
 
-  getFeesOverview: async () => {
+  getFeesOverview: async (params?: { academicYear?: string }) => {
     try {
-      const response = await axiosInstance.get('/dashboard/fee-summary');
+      const queryParams = new URLSearchParams();
+      if (params?.academicYear && params.academicYear !== 'All') {
+        queryParams.append('academicYear', params.academicYear);
+      }
+
+      const response = await axiosInstance.get(
+        `/dashboard/fee-summary${queryParams.toString() ? `?${queryParams.toString()}` : ''}`
+      );
       const data = response.data;
       if (data && data.success) {
         return {

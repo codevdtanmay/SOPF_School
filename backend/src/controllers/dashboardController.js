@@ -1,22 +1,52 @@
 import studentModel from "../models/student.model.js";
 import teacherModel from "../models/teacherSchema.model.js";
 import feePaymentModel from "../models/feePayment.model.js";
+import enrollmentModel from "../models/enrollment.model.js";
+import feeStructureModel from "../models/feeStructure.js";
+import academicYearModel from "../models/academicYear.model.js";
+import { resolveAcademicYearQuery } from "../utils/mongoQueryHelpers.js";
+
+const normalizeClassLabel = (value = "") =>
+  String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+
+const resolveDashboardAcademicYear = async (academicYearInput = "") => {
+  const requestedAcademicYear = String(academicYearInput || "").trim();
+
+  if (requestedAcademicYear) {
+    const academicYearDoc = await academicYearModel.findOne(
+      resolveAcademicYearQuery(requestedAcademicYear)
+    );
+
+    return academicYearDoc || null;
+  }
+
+  const currentAcademicYear = await academicYearModel.findOne({ isCurrent: true });
+  if (currentAcademicYear) {
+    return currentAcademicYear;
+  }
+
+  return academicYearModel.findOne().sort({ startDate: -1, createdAt: -1 });
+};
 
 const getDashboardStats = async (req, res) => {
   try {
-    // Student & Teacher Counts
-    const totalStudents = await studentModel.countDocuments({
-      isDeleted: false
-    });
+    const academicYearDoc = await resolveDashboardAcademicYear(req.query.academicYear);
+    const selectedAcademicYear = academicYearDoc?.label || String(req.query.academicYear || "").trim();
 
+    // Student & Teacher Counts
     const totalTeachers = await teacherModel.countDocuments({
       isDeleted: false
     });
 
-    // Students (for pending fees & status)
-    const students = await studentModel.find({ isDeleted: false });
-
     const feeAggregation = await feePaymentModel.aggregate([
+      {
+        $match: selectedAcademicYear
+          ? { academicYear: selectedAcademicYear }
+          : {}
+      },
       {
         $group: {
           _id: null,
@@ -27,33 +57,66 @@ const getDashboardStats = async (req, res) => {
 
     const feesCollected = feeAggregation[0]?.total || 0;
 
-    // Pending Fees
-    const paymentSummaries = await Promise.all(
-      students.map(async (student) => {
-        const annualPaidAggregation = await feePaymentModel.aggregate([
+    const enrollments = academicYearDoc
+      ? await enrollmentModel
+          .find({ academicYear: academicYearDoc._id })
+          .populate({
+            path: "student",
+            match: { isDeleted: false }
+          })
+      : [];
+
+    const activeEnrollments = enrollments.filter((enrollment) => enrollment.student);
+    const totalStudents = academicYearDoc
+      ? activeEnrollments.length
+      : await studentModel.countDocuments({
+          isDeleted: false
+        });
+    const selectedYearPayments = selectedAcademicYear
+      ? await feePaymentModel.aggregate([
           {
             $match: {
-              studentId: student._id,
-              academicYear: student.academicYear
+              academicYear: selectedAcademicYear
             }
           },
           {
             $group: {
-              _id: null,
+              _id: "$studentId",
               total: { $sum: "$paidAmount" }
             }
           }
-        ]);
+        ])
+      : [];
 
-        const totalPaid = annualPaidAggregation[0]?.total || 0;
-        return {
-          paid: totalPaid >= (student.totalFee || 0),
-          partial: totalPaid > 0 && totalPaid < (student.totalFee || 0),
-          pending: totalPaid <= 0,
-          due: Math.max(0, (student.totalFee || 0) - totalPaid)
-        };
-      })
+    const paymentsByStudentId = new Map(
+      selectedYearPayments.map((entry) => [String(entry._id), Number(entry.total || 0)])
     );
+
+    const selectedYearStructures = selectedAcademicYear
+      ? await feeStructureModel.find({
+          isDeleted: false,
+          academicYear: selectedAcademicYear
+        })
+      : [];
+
+    const paymentSummaries = activeEnrollments.map((enrollment) => {
+      const student = enrollment.student;
+      const className = String(enrollment.class || student.class || "").trim();
+      const normalizedClassName = normalizeClassLabel(className);
+      const structure =
+        selectedYearStructures.find(
+          (item) => normalizeClassLabel(item.class) === normalizedClassName
+        ) || null;
+      const totalFee = Number(structure?.totalFee || student.totalFee || 0);
+      const totalPaid = paymentsByStudentId.get(String(student._id)) || 0;
+
+      return {
+        paid: totalPaid >= totalFee,
+        partial: totalPaid > 0 && totalPaid < totalFee,
+        pending: totalPaid <= 0,
+        due: Math.max(0, totalFee - totalPaid)
+      };
+    });
 
     const pendingFees = paymentSummaries.reduce((sum, item) => sum + item.due, 0);
     const paidStudents = paymentSummaries.filter((item) => item.paid).length;
@@ -86,11 +149,15 @@ const getDashboardStats = async (req, res) => {
 
 const getFeeSummary = async (req, res) => {
   try {
-    const students = await studentModel.find(
-      { isDeleted: false }
-    );
+    const academicYearDoc = await resolveDashboardAcademicYear(req.query.academicYear);
+    const selectedAcademicYear = academicYearDoc?.label || String(req.query.academicYear || "").trim();
 
     const feeAggregation = await feePaymentModel.aggregate([
+      {
+        $match: selectedAcademicYear
+          ? { academicYear: selectedAcademicYear }
+          : {}
+      },
       {
         $group: {
           _id: null,
@@ -101,26 +168,55 @@ const getFeeSummary = async (req, res) => {
 
     const collected = feeAggregation[0]?.total || 0;
 
-    const pendingTotals = await Promise.all(
-      students.map(async (student) => {
-        const annualPaidAggregation = await feePaymentModel.aggregate([
+    const enrollments = academicYearDoc
+      ? await enrollmentModel
+          .find({ academicYear: academicYearDoc._id })
+          .populate({
+            path: "student",
+            match: { isDeleted: false }
+          })
+      : [];
+
+    const activeEnrollments = enrollments.filter((enrollment) => enrollment.student);
+    const selectedYearPayments = selectedAcademicYear
+      ? await feePaymentModel.aggregate([
           {
             $match: {
-              studentId: student._id,
-              academicYear: student.academicYear
+              academicYear: selectedAcademicYear
             }
           },
           {
             $group: {
-              _id: null,
+              _id: "$studentId",
               total: { $sum: "$paidAmount" }
             }
           }
-        ]);
-        const totalPaid = annualPaidAggregation[0]?.total || 0;
-        return Math.max(0, (student.totalFee || 0) - totalPaid);
-      })
+        ])
+      : [];
+
+    const paymentsByStudentId = new Map(
+      selectedYearPayments.map((entry) => [String(entry._id), Number(entry.total || 0)])
     );
+
+    const selectedYearStructures = selectedAcademicYear
+      ? await feeStructureModel.find({
+          isDeleted: false,
+          academicYear: selectedAcademicYear
+        })
+      : [];
+
+    const pendingTotals = activeEnrollments.map((enrollment) => {
+      const student = enrollment.student;
+      const className = String(enrollment.class || student.class || "").trim();
+      const normalizedClassName = normalizeClassLabel(className);
+      const structure =
+        selectedYearStructures.find(
+          (item) => normalizeClassLabel(item.class) === normalizedClassName
+        ) || null;
+      const totalFee = Number(structure?.totalFee || student.totalFee || 0);
+      const totalPaid = paymentsByStudentId.get(String(student._id)) || 0;
+      return Math.max(0, totalFee - totalPaid);
+    });
 
     const pending = pendingTotals.reduce((sum, value) => sum + value, 0);
 
