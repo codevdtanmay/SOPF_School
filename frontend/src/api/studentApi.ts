@@ -1,8 +1,5 @@
 import axiosInstance from '../services/axiosInstance';
-import { FinancialHistoryEntry, PromotionHistoryEntry, Student } from '../types';
-
-const CURRENT_YEAR = new Date().getFullYear();
-const DEFAULT_ACADEMIC_SESSION = `${CURRENT_YEAR}-${String(CURRENT_YEAR + 1).slice(-2)}`;
+import { AcademicYear, FinancialHistoryEntry, PromotionHistoryEntry, Student } from '../types';
 
 const mapStudentResponse = (s: any): Student => {
   if (!s) return s;
@@ -22,7 +19,7 @@ const mapStudentResponse = (s: any): Student => {
     class: s.class || '',
     section: s.section || '',
     rollNo: s.rollNo != null ? Number(s.rollNo) : undefined,
-    academicYear: s.academicYear || DEFAULT_ACADEMIC_SESSION,
+    academicYear: s.academicYear || s.currentEnrollment?.academicYear?.label || s.currentEnrollment?.academicYear || '',
     lifecycleStatus: s.lifecycleStatus || 'Active',
     fatherName: s.fatherName || '',
     motherName: s.motherName || '',
@@ -48,6 +45,15 @@ const mapStudentResponse = (s: any): Student => {
     contact: s.phone || s.contact || '',
     admissionDate: s.createdAt ? new Date(s.createdAt).toISOString().split('T')[0] : (s.admissionDate || ''),
     usesTransport: s.usesTransport ?? false,
+    currentEnrollment: s.currentEnrollment
+      ? {
+          id: s.currentEnrollment._id || s.currentEnrollment.id,
+          class: s.currentEnrollment.class || '',
+          section: s.currentEnrollment.section || '',
+          academicYear: s.currentEnrollment.academicYear?.label || s.currentEnrollment.academicYear || '',
+          status: s.currentEnrollment.status || ''
+        }
+      : null,
     // New Demographics and Govt ID fields
     dateOfBirth: s.dateOfBirth || '',
     joiningDate: s.joiningDate || '',
@@ -94,6 +100,7 @@ export const studentApi = {
     category?: string;
     village?: string;
     class?: string;
+    section?: string;
     academicYear?: string;
     lifecycleStatus?: string;
     sortBy?: string;
@@ -108,6 +115,7 @@ export const studentApi = {
         if (params.category && params.category !== 'All') queryParams.append('category', params.category);
         if (params.village) queryParams.append('village', params.village);
         if (params.class && params.class !== 'All') queryParams.append('class', params.class);
+        if (params.section && params.section !== 'All') queryParams.append('section', params.section);
         if (params.academicYear && params.academicYear !== 'All') queryParams.append('academicYear', params.academicYear);
         if (params.lifecycleStatus && params.lifecycleStatus !== 'All') queryParams.append('lifecycleStatus', params.lifecycleStatus);
         if (params.sortBy) queryParams.append('sortBy', params.sortBy);
@@ -147,14 +155,77 @@ export const studentApi = {
     }
   },
 
-  getPromotionAcademicYears: async (): Promise<string[]> => {
+  getPromotionAcademicYears: async (): Promise<AcademicYear[]> => {
     try {
       const response = await axiosInstance.get('/student/promotion/academic-years');
       const data = response.data;
-      return Array.isArray(data?.academicYears) ? data.academicYears : [];
+      const academicYears = Array.isArray(data?.academicYearDetails)
+        ? data.academicYearDetails
+        : Array.isArray(data?.academicYears)
+          ? data.academicYears
+          : [];
+
+      return academicYears.map((year: any) => ({
+        id: year._id || year.id,
+        label: year.label || '',
+        startDate: year.startDate || '',
+        endDate: year.endDate || '',
+        isCurrent: Boolean(year.isCurrent)
+      }));
     } catch (e) {
-      return [DEFAULT_ACADEMIC_SESSION, `${CURRENT_YEAR + 1}-${String(CURRENT_YEAR + 2).slice(-2)}`];
+      return [];
     }
+  },
+
+  getAcademicYears: async (): Promise<AcademicYear[]> => {
+    try {
+      const response = await axiosInstance.get('/academic-years');
+      const data = response.data;
+      return Array.isArray(data?.academicYears)
+        ? data.academicYears.map((year: any) => ({
+            id: year._id || year.id,
+            label: year.label || '',
+            startDate: year.startDate || '',
+            endDate: year.endDate || '',
+            isCurrent: Boolean(year.isCurrent)
+          }))
+        : [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  setCurrentAcademicYear: async (id: string): Promise<AcademicYear | null> => {
+    const response = await axiosInstance.patch(`/academic-years/${id}/current`);
+    const data = response.data;
+    const year = data?.academicYear;
+
+    return year
+      ? {
+          id: year._id || year.id,
+          label: year.label || '',
+          startDate: year.startDate || '',
+          endDate: year.endDate || '',
+          isCurrent: Boolean(year.isCurrent)
+        }
+      : null;
+  },
+
+  addNextAcademicYear: async (): Promise<{ message: string; academicYear: AcademicYear | null }> => {
+    const response = await axiosInstance.post('/academic-years/next-session');
+    const data = response.data;
+    return {
+      message: data?.message || '',
+      academicYear: data?.academicYear
+        ? {
+            id: data.academicYear._id || data.academicYear.id,
+            label: data.academicYear.label || '',
+            startDate: data.academicYear.startDate || '',
+            endDate: data.academicYear.endDate || '',
+            isCurrent: Boolean(data.academicYear.isCurrent)
+          }
+        : null
+    };
   },
 
   getPromotionHistory: async (): Promise<PromotionHistoryEntry[]> => {

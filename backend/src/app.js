@@ -12,6 +12,7 @@ import feeStructureRoute from "./routes/feeStructureRoute.route.js";
 import feeRoute from "./routes/feeRoute.route.js";
 import dashboardRoute from "./routes/dashboardRoute.js";
 import whatsappRoute from "./routes/whatsapp.route.js";
+import academicYearRoute from "./routes/academicYearRoute.js";
 
 import path from "path";
 import { fileURLToPath } from "url";
@@ -63,6 +64,7 @@ app.use("/api/fees", feeRoute);
 
 // Dashboard
 app.use("/api/dashboard", dashboardRoute);
+app.use("/api/academic-years", academicYearRoute);
 
 app.use("/api/tc", tcRoute)
 

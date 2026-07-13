@@ -1,3 +1,5 @@
+import { resolveStudentPlacementSync } from "./studentPlacement.js";
+
 export const normalizeAcademicYear = (value) =>
   String(value || "").trim();
 
@@ -63,23 +65,27 @@ export const buildFeePaymentSnapshot = ({
   paidAmount = amountPaid,
   dueAmount = 0,
   status = "Pending"
-}) => ({
-  studentId: student._id,
-  studentName: student.userId?.name || "",
-  admissionNo: student.admissionNo || "",
-  className: String(student.class || "").trim(),
-  section: String(student.section || "").trim(),
-  academicYear: normalizeAcademicYear(student.academicYear),
-  feeStructureId: feeStructure?._id || null,
-  month,
-  amount: Number(amountPaid) || 0,
-  paidAmount: Number(paidAmount) || 0,
-  dueAmount: Number(dueAmount) || 0,
-  status,
-  paymentMethod: paymentMethod || "Cash",
-  receiptNo,
-  paymentDate
-});
+}) => {
+  const placement = resolveStudentPlacementSync(student, student?.currentEnrollment || student?.enrollment || null);
+
+  return {
+    studentId: student._id,
+    studentName: student.userId?.name || "",
+    admissionNo: student.admissionNo || "",
+    className: placement.className,
+    section: placement.section,
+    academicYear: placement.academicYear || normalizeAcademicYear(student.academicYear),
+    feeStructureId: feeStructure?._id || null,
+    month,
+    amount: Number(amountPaid) || 0,
+    paidAmount: Number(paidAmount) || 0,
+    dueAmount: Number(dueAmount) || 0,
+    status,
+    paymentMethod: paymentMethod || "Cash",
+    receiptNo,
+    paymentDate
+  };
+};
 
 export const buildTransportPaymentSnapshot = ({
   student,
@@ -94,26 +100,29 @@ export const buildTransportPaymentSnapshot = ({
   paymentMethod,
   paymentDate = new Date(),
   remarks = ""
-}) => ({
-  studentId: student._id,
-  studentName: student.userId?.name || "",
-  admissionNo: student.admissionNo || "",
-  className: String(student.class || "").trim(),
-  section: String(student.section || "").trim(),
-  academicYear: normalizeAcademicYear(student.academicYear),
-  transportId: transport?._id || null,
-  routeName: transport?.routeName || "",
-  pickupPoint: transport?.pickupPoint || "",
-  monthlyCharge: Number(transport?.monthlyCharge || 0),
-  month: Number(month),
-  year: Number(year),
-  receiptNo,
-  amount: Number(amount) || 0,
-  paidAmount: Number(paidAmount) || 0,
-  dueAmount: Number(dueAmount) || 0,
-  status,
-  paymentMethod: paymentMethod || "Cash",
-  paymentDate,
-  remarks
-});
+}) => {
+  const placement = resolveStudentPlacementSync(student, student?.currentEnrollment || student?.enrollment || null);
 
+  return {
+    studentId: student._id,
+    studentName: student.userId?.name || "",
+    admissionNo: student.admissionNo || "",
+    className: placement.className,
+    section: placement.section,
+    academicYear: placement.academicYear || normalizeAcademicYear(student.academicYear),
+    transportId: transport?._id || null,
+    routeName: transport?.routeName || "",
+    pickupPoint: transport?.pickupPoint || "",
+    monthlyCharge: Number(transport?.monthlyCharge || 0),
+    month: Number(month),
+    year: Number(year),
+    receiptNo,
+    amount: Number(amount) || 0,
+    paidAmount: Number(paidAmount) || 0,
+    dueAmount: Number(dueAmount) || 0,
+    status,
+    paymentMethod: paymentMethod || "Cash",
+    paymentDate,
+    remarks
+  };
+};

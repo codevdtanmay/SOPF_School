@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Search, Loader as LoaderIcon } from 'lucide-react';
 
 import Button from '../../../components/common/Button';
@@ -16,15 +16,17 @@ interface Props {
 const monthsList = [
   'January','February','March','April','May','June','July','August','September','October','November','December'
 ];
+const getCurrentCalendarMonth = () => monthsList[new Date().getMonth()];
+const getCurrentCalendarYear = () => String(new Date().getFullYear());
 
 const TransportFeeCollection: React.FC<Props> = ({ loading, transports, payments, onCollectFee }) => {
   const [colSearchQuery, setColSearchQuery] = useState('');
   const [colRouteFilter, setColRouteFilter] = useState('All');
   const [colClassFilter, setColClassFilter] = useState('All');
   const [colStatusFilter, setColStatusFilter] = useState('All');
-  const current = new Date();
-  const currentCalendarMonth = monthsList[current.getMonth()];
-  const currentCalendarYear = String(current.getFullYear());
+  const [currentCalendarMonth, setCurrentCalendarMonth] = useState(getCurrentCalendarMonth);
+  const [currentCalendarYear, setCurrentCalendarYear] = useState(getCurrentCalendarYear);
+  const previousCalendarRef = useRef({ month: currentCalendarMonth, year: currentCalendarYear });
   const [colMonthFilter, setColMonthFilter] = useState(currentCalendarMonth);
   const [colYearFilter, setColYearFilter] = useState(currentCalendarYear);
 
@@ -39,6 +41,36 @@ const TransportFeeCollection: React.FC<Props> = ({ loading, transports, payments
     const startYear = Math.max(1, y - 1);
     return Array.from({ length: maxYear - startYear + 1 }, (_, index) => String(startYear + index));
   }, [currentCalendarYear]);
+
+  useEffect(() => {
+    const syncCalendarFilters = () => {
+      const nextMonth = getCurrentCalendarMonth();
+      const nextYear = getCurrentCalendarYear();
+      const previous = previousCalendarRef.current;
+
+      setCurrentCalendarMonth(nextMonth);
+      setCurrentCalendarYear(nextYear);
+
+      setColMonthFilter((current) => (current === previous.month ? nextMonth : current));
+      setColYearFilter((current) => (current === previous.year ? nextYear : current));
+
+      previousCalendarRef.current = { month: nextMonth, year: nextYear };
+    };
+
+    const now = new Date();
+    const nextMidnight = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+      0,
+      0,
+      1,
+      0
+    );
+    const timeout = window.setTimeout(syncCalendarFilters, nextMidnight.getTime() - now.getTime());
+
+    return () => window.clearTimeout(timeout);
+  }, [currentCalendarMonth, currentCalendarYear]);
 
   const feeCollectionRoster = useMemo(() => {
     const active = transports.filter(t => t.status === 'Active');

@@ -3,8 +3,13 @@ import userModel from "../models/userSchema.model.js";
 import feeStructureModel from "../models/feeStructure.js";
 import feePaymentModel from "../models/feePayment.model.js";
 import promotionHistoryModel from "../models/promotionHistory.model.js";
+import academicYearModel from "../models/academicYear.model.js";
+import enrollmentModel from "../models/enrollment.model.js";
+import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import { normalizeAcademicYear, normalizeClassLabel, buildClassName, academicYearSortValue } from "../utils/feeLifecycle.js";
+import { getCurrentAcademicYearDoc, resolveStudentPlacementSync } from "../utils/studentPlacement.js";
+import { resolveAcademicYearQuery } from "../utils/mongoQueryHelpers.js";
 
 const DEFAULT_ACADEMIC_SESSION = `${new Date().getFullYear()}-${String(
   new Date().getFullYear() + 1
@@ -49,43 +54,46 @@ const escapeRegex = (value) =>
 const normalizeAcademicSession = (value) =>
   String(value || "").trim();
 
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeOptionalDate = (value) => {
+  const normalized = String(value || "").trim();
+  return normalized ? normalized : undefined;
+};
+
 const academicSessionSortValue = (value) => {
   return academicYearSortValue(value);
 };
 
 const getAvailableAcademicSessions = async () => {
-  const sessions = await feeStructureModel.distinct("academicSession", {
-    isDeleted: false
-  });
-  const academicYears = await feeStructureModel.distinct("academicYear", {
-    isDeleted: false
-  });
-
-  const uniqueSessions = Array.from(
-    new Set(
-      [...sessions, ...academicYears]
-        .map(normalizeAcademicSession)
-        .filter(Boolean)
-    )
-  );
-
-  const currentYear = new Date().getFullYear();
-  const fallbackSessions = [
-    `${currentYear}-${String(currentYear + 1).slice(-2)}`,
-    `${currentYear + 1}-${String(currentYear + 2).slice(-2)}`
-  ];
-
-  const combinedSessions = Array.from(
-    new Set([...uniqueSessions, ...fallbackSessions])
-  );
-
-  return combinedSessions.sort(
-    (a, b) => academicSessionSortValue(b) - academicSessionSortValue(a)
-  );
+  const sessions = await academicYearModel.find().sort({ isCurrent: -1, startDate: -1, createdAt: -1 });
+  return sessions.map((item) => normalizeAcademicSession(item.label)).filter(Boolean);
 };
 
 const buildClassLabel = (studentClass) =>
   String(studentClass || "");
+
+const getCurrentAcademicYear = async () => {
+  const academicYearDoc = await getCurrentAcademicYearDoc();
+  return normalizeAcademicSession(academicYearDoc?.label);
+};
+
+const getEnrollmentPlacement = async (studentId, academicYearLabel = "") => {
+  const academicYearDoc = await academicYearModel.findOne(
+    resolveAcademicYearQuery(normalizeAcademicSession(academicYearLabel))
+  );
+
+  if (!academicYearDoc) {
+    return null;
+  }
+
+  return enrollmentModel
+    .findOne({
+      student: studentId,
+      academicYear: academicYearDoc._id,
+      status: "active"
+    })
+    .populate("academicYear", "label isCurrent");
+};
 
 const MONTH_SEQUENCE = [
   "July",
@@ -185,13 +193,53 @@ const addStudent = async (req, res) => {
       address
     } = req.body;
 
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const normalizedAdmissionNo = String(admissionNo || "").trim();
+    const normalizedStudentClass = String(studentClass || "").trim();
+
+    if (!normalizedEmail) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is required"
+      });
+    }
+
+    if (!EMAIL_PATTERN.test(normalizedEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Please enter a valid email address"
+      });
+    }
+
+    if (!normalizedAdmissionNo) {
+      return res.status(400).json({
+        success: false,
+        message: "Admission number is required"
+      });
+    }
+
+    if (!normalizedStudentClass) {
+      return res.status(400).json({
+        success: false,
+        message: "Class is required"
+      });
+    }
+
     // Email Exists
-    const userExists = await userModel.findOne({ email });
+    const userExists = await userModel.findOne({ email: normalizedEmail });
 
     if (userExists) {
       return res.status(409).json({
         success: false,
         message: "User already exists"
+      });
+    }
+
+    const admissionExists = await studentModel.findOne({ admissionNo: normalizedAdmissionNo });
+    if (admissionExists) {
+      return res.status(409).json({
+        success: false,
+        message: "Admission number already exists"
       });
     }
 
@@ -263,7 +311,12 @@ const addStudent = async (req, res) => {
     }
 
     const resolvedAcademicYear =
-      normalizeAcademicSession(academicYear) || DEFAULT_ACADEMIC_SESSION;
+      normalizeAcademicSession(academicYear) || (await getCurrentAcademicYear()) || DEFAULT_ACADEMIC_SESSION;
+    let academicYearDoc = await academicYearModel.findOne(resolveAcademicYearQuery(resolvedAcademicYear));
+
+    if (!academicYearDoc) {
+      academicYearDoc = await getCurrentAcademicYearDoc();
+    }
 
     // Fee Structure
 
@@ -280,7 +333,7 @@ const addStudent = async (req, res) => {
 
     const user = await userModel.create({
       name,
-      email,
+      email: normalizedEmail,
       password: hashedPassword,
       role: "student"
     });
@@ -291,11 +344,12 @@ const addStudent = async (req, res) => {
     const student = await studentModel.create({
       userId: user._id,
 
-      admissionNo,
+      admissionNo: normalizedAdmissionNo,
 
-      class: studentClass,
+      class: normalizedStudentClass,
       rollNo,
       academicYear: resolvedAcademicYear,
+      section: String(req.body.section || "").trim(),
       lifecycleStatus: lifecycleStatus || "Active",
 
       fatherName,
@@ -303,8 +357,8 @@ const addStudent = async (req, res) => {
       phone,
 
       gender,
-      dateOfBirth,
-      joiningDate,
+      dateOfBirth: normalizeOptionalDate(dateOfBirth),
+      joiningDate: normalizeOptionalDate(joiningDate),
 
       category,
 
@@ -323,6 +377,17 @@ const addStudent = async (req, res) => {
       status: "Pending"
     });
 
+    if (academicYearDoc) {
+      await enrollmentModel.create({
+        student: student._id,
+        academicYear: academicYearDoc._id,
+        class: studentClass,
+        section: String(req.body.section || "").trim(),
+        rollNo: rollNo ? Number(rollNo) : null,
+        status: "active"
+      });
+    }
+
     const populatedStudent = await studentModel
       .findById(student._id)
       .populate("userId", "name email");
@@ -336,9 +401,43 @@ const addStudent = async (req, res) => {
   } catch (error) {
     console.error(error);
 
+    if (error?.name === "ValidationError") {
+      const message = Object.values(error.errors || {})
+        .map((err) => err?.message)
+        .filter(Boolean)
+        .join(", ") || "Validation failed";
+
+      return res.status(400).json({
+        success: false,
+        message
+      });
+    }
+
+    if (error?.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid ${error.path || "value"}`
+      });
+    }
+
+    if (error?.code === 11000) {
+      const duplicateField = Object.keys(error.keyPattern || {})[0] || Object.keys(error.keyValue || {})[0] || "";
+      const duplicateMessage =
+        duplicateField === "email"
+          ? "User already exists"
+          : duplicateField === "admissionNo"
+            ? "Admission number already exists"
+            : "Duplicate record already exists";
+
+      return res.status(409).json({
+        success: false,
+        message: duplicateMessage
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      message: "Internal Server Error"
+      message: error?.message || "Internal Server Error"
     });
   }
 };
@@ -354,6 +453,7 @@ const getStudents = async (req, res) => {
 
     const {
       class: studentClass,
+      section,
       academicYear,
       lifecycleStatus,
       category,
@@ -366,81 +466,177 @@ const getStudents = async (req, res) => {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 20;
 
-    const filter = {
-      isDeleted: false
+    const requestedAcademicYearInput = normalizeAcademicSession(academicYear);
+    let academicYearDoc = null;
+
+    if (requestedAcademicYearInput) {
+      academicYearDoc = await academicYearModel.findOne(resolveAcademicYearQuery(requestedAcademicYearInput));
+    } else {
+      // No academic year specified, use current
+      academicYearDoc = await getCurrentAcademicYearDoc();
+    }
+
+    if (requestedAcademicYearInput && !academicYearDoc) {
+      return res.status(400).json({
+        success: false,
+        message: `Academic year "${requestedAcademicYearInput}" does not exist`
+      });
+    }
+
+    const resolvedAcademicYearLabel = academicYearDoc?.label || normalizeAcademicSession(academicYear) || (await getCurrentAcademicYear());
+
+    const mergeStudent = (student, enrollment) => {
+      const placement = resolveStudentPlacementSync(student, enrollment);
+      const studentObject = student.toObject ? student.toObject() : student;
+
+      return {
+        ...studentObject,
+        class: placement.className,
+        section: placement.section,
+        academicYear: placement.academicYear || resolvedAcademicYearLabel || studentObject.academicYear || "",
+        currentEnrollment: enrollment || null
+      };
     };
 
-    if (studentClass)
-      filter.class = studentClass;
+    const buildLegacyFilter = () => {
+      const filter = {
+        isDeleted: false
+      };
 
-    if (academicYear)
-      filter.academicYear = academicYear;
+      if (studentClass) {
+        filter.class = studentClass;
+      }
 
-    if (lifecycleStatus)
-      filter.lifecycleStatus = lifecycleStatus;
+      if (section) {
+        filter.section = section;
+      }
 
-    if (category)
-      filter.category = category;
+      if (academicYearDoc?.label) {
+        filter.academicYear = academicYearDoc.label;
+      }
 
-    if (village) {
-      const villageRegex = new RegExp(
-        escapeRegex(String(village).trim()),
-        "i"
-      );
-      filter["address.village"] = villageRegex;
+      if (lifecycleStatus) {
+        filter.lifecycleStatus = lifecycleStatus;
+      }
+
+      if (category) {
+        filter.category = category;
+      }
+
+      if (village) {
+        filter["address.village"] = new RegExp(escapeRegex(String(village).trim()), "i");
+      }
+
+      if (search) {
+        const searchRegex = new RegExp(escapeRegex(String(search).trim()), "i");
+        const numericSearch = Number(search);
+        filter.$or = [
+          { admissionNo: searchRegex },
+          ...(!Number.isNaN(numericSearch) ? [{ rollNo: numericSearch }] : []),
+          { class: searchRegex },
+          { section: searchRegex },
+          { category: searchRegex },
+          { fatherName: searchRegex },
+          { motherName: searchRegex },
+          { phone: searchRegex },
+          { aadharNo: searchRegex },
+          { samagraId: searchRegex },
+          { apaarId: searchRegex },
+          { panNo: searchRegex },
+          { "address.village": searchRegex }
+        ];
+      }
+
+      return filter;
+    };
+
+    let results = [];
+
+    if (academicYearDoc) {
+      const enrollmentFilter = {
+        academicYear: academicYearDoc._id,
+        status: "active"
+      };
+
+      if (studentClass) {
+        enrollmentFilter.class = studentClass;
+      }
+
+      if (section) {
+        enrollmentFilter.section = section;
+      }
+
+      const enrollments = await enrollmentModel
+        .find(enrollmentFilter)
+        .populate({
+          path: "student",
+          match: {
+            isDeleted: false,
+            ...(lifecycleStatus ? { lifecycleStatus } : {}),
+            ...(category ? { category } : {}),
+            ...(village ? { "address.village": new RegExp(escapeRegex(String(village).trim()), "i") } : {})
+          },
+          populate: {
+            path: "userId",
+            select: "name email"
+          }
+        })
+        .populate("academicYear", "label isCurrent")
+        .populate("promotedFrom");
+
+      results = enrollments
+        .filter((enrollment) => enrollment.student)
+        .map((enrollment) => mergeStudent(enrollment.student, enrollment));
+
+      if (search) {
+        const searchText = String(search).trim().toLowerCase();
+        results = results.filter((student) => {
+          const searchHit =
+            student.userId?.name?.toLowerCase().includes(searchText) ||
+            student.userId?.email?.toLowerCase().includes(searchText) ||
+            student.admissionNo?.toLowerCase().includes(searchText) ||
+            String(student.rollNo || "").includes(searchText) ||
+            String(student.class || "").toLowerCase().includes(searchText) ||
+            String(student.section || "").toLowerCase().includes(searchText) ||
+            String(student.category || "").toLowerCase().includes(searchText) ||
+            String(student.fatherName || "").toLowerCase().includes(searchText) ||
+            String(student.motherName || "").toLowerCase().includes(searchText) ||
+            String(student.phone || "").toLowerCase().includes(searchText) ||
+            String(student.aadharNo || "").toLowerCase().includes(searchText) ||
+            String(student.samagraId || "").toLowerCase().includes(searchText) ||
+            String(student.apaarId || "").toLowerCase().includes(searchText) ||
+            String(student.panNo || "").toLowerCase().includes(searchText) ||
+            String(student.address?.village || "").toLowerCase().includes(searchText);
+
+          return searchHit;
+        });
+      }
+    } else {
+      const legacyFilter = buildLegacyFilter();
+      const legacyStudents = await studentModel
+        .find(legacyFilter)
+        .populate("userId", "name email");
+
+      results = legacyStudents.map((student) => mergeStudent(student, null));
     }
 
-    if (search) {
-      const searchRegex = new RegExp(
-        escapeRegex(String(search).trim()),
-        "i"
-      );
+    const sortedResults = results.sort((a, b) => {
+      const direction = order === "asc" ? 1 : -1;
+      const aValue = a?.[sortBy];
+      const bValue = b?.[sortBy];
 
-      const matchingUsers = await userModel.find(
-        {
-          isDeleted: false,
-          $or: [
-            { name: searchRegex },
-            { email: searchRegex }
-          ]
-        },
-        "_id"
-      );
+      if (sortBy === "rollNo") {
+        return (Number(aValue || 0) - Number(bValue || 0)) * direction;
+      }
 
-      const matchingUserIds = matchingUsers.map((user) => user._id);
-      const numericSearch = Number(search);
+      return String(aValue || "").localeCompare(String(bValue || ""), undefined, {
+        numeric: true,
+        sensitivity: "base"
+      }) * direction;
+    });
 
-      filter.$or = [
-        ...(matchingUserIds.length
-          ? [{ userId: { $in: matchingUserIds } }]
-          : []),
-        { admissionNo: searchRegex },
-        ...(!Number.isNaN(numericSearch)
-          ? [{ rollNo: numericSearch }]
-          : []),
-        { class: searchRegex },
-        { section: searchRegex },
-        { category: searchRegex },
-        { fatherName: searchRegex },
-        { motherName: searchRegex },
-        { phone: searchRegex },
-        { aadharNo: searchRegex },
-        { samagraId: searchRegex },
-        { apaarId: searchRegex },
-        { panNo: searchRegex },
-        { "address.village": searchRegex }
-      ];
-    }
-
-    const totalStudents = await studentModel.countDocuments(filter);
-
-    const students = await studentModel.find(filter)
-      .populate("userId", "name email")
-      .sort({
-        [sortBy]: order === "asc" ? 1 : -1
-      })
-      .skip((page - 1) * limit)
-      .limit(limit);
+    const totalStudents = sortedResults.length;
+    const students = sortedResults.slice((page - 1) * limit, (page - 1) * limit + limit);
 
     return res.status(200).json({
       success: true,
@@ -490,9 +686,19 @@ const getStudentbyId = async (req, res) => {
       });
     }
 
+    const currentAcademicYear = await getCurrentAcademicYear();
+    const enrollment = await getEnrollmentPlacement(student._id, currentAcademicYear);
+    const placement = resolveStudentPlacementSync(student, enrollment);
+
     return res.status(200).json({
       success: true,
-      student
+      student: {
+        ...student.toObject(),
+        class: placement.className,
+        section: placement.section,
+        academicYear: placement.academicYear || currentAcademicYear || student.academicYear || "",
+        currentEnrollment: enrollment || null
+      }
     });
 
   } catch (error) {
@@ -555,8 +761,9 @@ const getStudentFinancialHistory = async (req, res) => {
     });
 
     const currentAcademicYear = normalizeAcademicYear(student.academicYear);
-    if (currentAcademicYear) {
-      academicYearSet.add(currentAcademicYear);
+    const currentEnrollmentYear = currentAcademicYear || normalizeAcademicYear(await getCurrentAcademicYear());
+    if (currentEnrollmentYear) {
+      academicYearSet.add(currentEnrollmentYear);
     }
 
     const academicYears = Array.from(academicYearSet).sort(
@@ -570,7 +777,8 @@ const getStudentFinancialHistory = async (req, res) => {
         );
         const snapshotPayment = yearPayments[0] || null;
 
-        const className = snapshotPayment?.className || String(student.class || "").trim();
+        const activeEnrollment = await getEnrollmentPlacement(student._id, academicYear);
+        const className = snapshotPayment?.className || activeEnrollment?.class || String(student.class || "").trim();
         const feeStructure = snapshotPayment?.feeStructureId
           ? await feeStructureModel.findOne({
               _id: snapshotPayment.feeStructureId,
@@ -638,8 +846,8 @@ const getStudentFinancialHistory = async (req, res) => {
         id: student._id,
         name: student.userId?.name || "",
         admissionNo: student.admissionNo || "",
-        class: student.class || "",
-        academicYear: currentAcademicYear
+        class: (await getEnrollmentPlacement(student._id, currentEnrollmentYear))?.class || student.class || "",
+        academicYear: currentEnrollmentYear
       },
       history
     });
@@ -660,11 +868,19 @@ const getStudentFinancialHistory = async (req, res) => {
 
 const getPromotionAcademicYears = async (_req, res) => {
   try {
-    const academicYears = await getAvailableAcademicSessions();
+    const academicYears = await academicYearModel
+      .find()
+      .sort({ isCurrent: -1, startDate: -1, createdAt: -1 })
+      .select("label isCurrent");
 
     return res.status(200).json({
       success: true,
-      academicYears
+      academicYears: academicYears.map((year) => ({
+        id: year._id,
+        label: year.label,
+        isCurrent: year.isCurrent
+      })),
+      academicYearDetails: academicYears
     });
   } catch (error) {
     console.error(error);
@@ -772,16 +988,24 @@ const promoteStudents = async (req, res) => {
       });
     }
 
-    const availableAcademicYears = await getAvailableAcademicSessions();
+    // Resolve source academic year (could be ObjectId or label string)
+    let sourceAcademicYearDoc = await academicYearModel.findOne(
+      resolveAcademicYearQuery(normalizedCurrentAcademicYear)
+    );
 
-    if (!availableAcademicYears.includes(normalizedCurrentAcademicYear)) {
+    // Resolve destination academic year (could be ObjectId or label string)
+    let destinationAcademicYearDoc = await academicYearModel.findOne(
+      resolveAcademicYearQuery(normalizedDestinationAcademicYear)
+    );
+
+    if (!sourceAcademicYearDoc) {
       return res.status(400).json({
         success: false,
         message: "Current academic year does not exist"
       });
     }
 
-    if (!availableAcademicYears.includes(normalizedDestinationAcademicYear)) {
+    if (!destinationAcademicYearDoc) {
       return res.status(400).json({
         success: false,
         message: "Destination academic year does not exist"
@@ -799,131 +1023,129 @@ const promoteStudents = async (req, res) => {
       });
     }
 
-    const rosterFilter = {
-      isDeleted: false,
-      class: normalizedCurrentClass,
-      academicYear: normalizedCurrentAcademicYear
-    };
+    const sourceEnrollments = await enrollmentModel
+      .find({
+        academicYear: sourceAcademicYearDoc._id,
+        class: normalizedCurrentClass,
+        ...(normalizedCurrentSection ? { section: normalizedCurrentSection } : {}),
+        status: "active"
+      })
+      .populate({
+        path: "student",
+        match: { isDeleted: false, lifecycleStatus: "Active" },
+        populate: {
+          path: "userId",
+          select: "name email"
+        }
+      })
+      .populate("academicYear", "label isCurrent");
 
-    let students = [];
+    const enrollmentByStudentId = new Map(
+      sourceEnrollments
+        .filter((enrollment) => enrollment.student)
+        .map((enrollment) => [String(enrollment.student._id), enrollment])
+    );
 
-    if (idFilter.length > 0) {
-      students = await studentModel
-        .find({
-          _id: { $in: idFilter },
-          isDeleted: false
-        })
-        .populate("userId", "name email");
-    } else {
-      students = await studentModel
-        .find(rosterFilter)
-        .populate("userId", "name email");
-    }
+    const candidateStudentIds = idFilter.length
+      ? idFilter
+      : Array.from(enrollmentByStudentId.keys());
 
-    if (students.length === 0) {
+    if (candidateStudentIds.length === 0) {
       return res.status(404).json({
         success: false,
         message: "No students found for the selected promotion criteria"
       });
     }
 
-    const activeStatuses = new Set(["Active"]);
     const promotedStudents = [];
     const skippedStudents = [];
     const alreadyExistedStudents = [];
+    const promotionSession = await mongoose.startSession();
 
-    for (const student of students) {
-      const studentAcademicYear = normalizeAcademicSession(
-        student.academicYear || normalizedCurrentAcademicYear
-      );
+    try {
+      await promotionSession.withTransaction(async () => {
+        for (const studentId of candidateStudentIds) {
+          const enrollment = enrollmentByStudentId.get(String(studentId));
+          if (!enrollment) {
+            skippedStudents.push({
+              studentId,
+              name: "",
+              reason: "No matching active enrollment found for the source academic year"
+            });
+            console.warn(
+              `[promotion] skipped student ${studentId}: no active enrollment for ${normalizedCurrentAcademicYear} / ${normalizedCurrentClass}`
+            );
+            continue;
+          }
 
-      if (
-        normalizedCurrentClass &&
-        String(student.class || "").trim().toLowerCase() !== normalizedCurrentClass.toLowerCase()
-      ) {
-        skippedStudents.push({
-          studentId: student._id,
-          name: student.userId?.name || "",
-          reason: "Student is not in the selected current class"
-        });
-        continue;
-      }
+          const student = enrollment.student;
 
-      if (studentAcademicYear !== normalizedCurrentAcademicYear) {
-        skippedStudents.push({
-          studentId: student._id,
-          name: student.userId?.name || "",
-          reason: "Student is not in the selected current academic year"
-        });
-        continue;
-      }
+          if (!student) {
+            skippedStudents.push({
+              studentId: enrollment.student?._id || enrollment.student,
+              name: "",
+              reason: "Student record not found for enrollment"
+            });
+            continue;
+          }
 
-      if (!activeStatuses.has(String(student.lifecycleStatus || "Active"))) {
-        skippedStudents.push({
-          studentId: student._id,
-          name: student.userId?.name || "",
-          reason: `Student status is ${student.lifecycleStatus || "Inactive"}`
-        });
-        continue;
-      }
+          const destinationExisting = await enrollmentModel.findOne({
+            student: student._id,
+            academicYear: destinationAcademicYearDoc._id
+          }).session(promotionSession);
 
-      const destinationFeeStructure = await findMatchingFeeStructure(
-        normalizedDestinationClass,
-        normalizedDestinationAcademicYear
-      );
+          if (destinationExisting) {
+            alreadyExistedStudents.push({
+              studentId: student._id,
+              name: student.userId?.name || "",
+              reason: "Student already has an enrollment for the destination academic year"
+            });
+            continue;
+          }
 
-      if (
-        String(student.class || "").trim().toLowerCase() === normalizedDestinationClass.toLowerCase()
-      ) {
-        alreadyExistedStudents.push({
-          studentId: student._id,
-          name: student.userId?.name || "",
-          reason: "Student already belongs to the destination class"
-        });
-        continue;
-      }
+          const newEnrollment = await enrollmentModel.create([{
+            student: student._id,
+            academicYear: destinationAcademicYearDoc._id,
+            class: normalizedDestinationClass,
+            section: normalizedDestinationSection,
+            rollNo: enrollment.rollNo ?? student.rollNo ?? null,
+            status: "active",
+            promotedFrom: enrollment._id
+          }], { session: promotionSession });
 
-      const updatedStudent = await studentModel.findByIdAndUpdate(
-        student._id,
-        {
-          class: normalizedDestinationClass,
-          academicYear: normalizedDestinationAcademicYear,
-          ...(destinationFeeStructure
-            ? {
-                feeStructureId: destinationFeeStructure._id,
-                totalFee: destinationFeeStructure.totalFee,
-                paidAmount: 0,
-                dueAmount: destinationFeeStructure.totalFee,
-                status: "Pending"
-              }
-            : {})
-        },
-        {
-          returnDocument: "after"
+          await enrollmentModel.updateOne(
+            { _id: enrollment._id },
+            { $set: { status: "promoted" } },
+            { session: promotionSession }
+          );
+
+          await promotionHistoryModel.create([{
+            studentId: student._id,
+            promotedBy: req.user.id,
+            promotionDate: new Date(),
+            oldClass: enrollment.class,
+            newClass: normalizedDestinationClass,
+            oldSection: enrollment.section || "",
+            newSection: normalizedDestinationSection,
+            oldAcademicYear: normalizedCurrentAcademicYear,
+            newAcademicYear: normalizedDestinationAcademicYear,
+            reason: String(reason || "").trim()
+          }], { session: promotionSession });
+
+          promotedStudents.push({
+            id: newEnrollment[0]?._id || "",
+            studentId: student._id,
+            name: student.userId?.name || "",
+            admissionNo: student.admissionNo || "",
+            oldClass: enrollment.class,
+            newClass: normalizedDestinationClass,
+            oldAcademicYear: normalizedCurrentAcademicYear,
+            newAcademicYear: normalizedDestinationAcademicYear
+          });
         }
-      );
-
-      await promotionHistoryModel.create({
-        studentId: student._id,
-        promotedBy: req.user.id,
-        promotionDate: new Date(),
-        oldClass: student.class,
-        newClass: normalizedDestinationClass,
-        oldAcademicYear: studentAcademicYear,
-        newAcademicYear: normalizedDestinationAcademicYear,
-        reason: String(reason || "").trim()
       });
-
-      promotedStudents.push({
-        id: updatedStudent?._id || student._id,
-        studentId: student._id,
-        name: student.userId?.name || "",
-        admissionNo: student.admissionNo || "",
-        oldClass: student.class,
-        newClass: normalizedDestinationClass,
-        oldAcademicYear: studentAcademicYear,
-        newAcademicYear: normalizedDestinationAcademicYear
-      });
+    } finally {
+      await promotionSession.endSession();
     }
 
     return res.status(200).json({
@@ -933,7 +1155,7 @@ const promoteStudents = async (req, res) => {
         promoted: promotedStudents.length,
         skipped: skippedStudents.length,
         alreadyExisted: alreadyExistedStudents.length,
-        totalSelected: students.length,
+        totalSelected: candidateStudentIds.length,
         promoteAllStudents: Boolean(promoteAllStudents)
       },
       promotedStudents,

@@ -73,6 +73,7 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
   const [viewingTC, setViewingTC] = useState<TransferCertificate | null>(null);
 
   // Form States for Generate TC
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('');
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
   const [formReason, setFormReason] = useState<string>('Transfer');
   const [formLastAttendance, setFormLastAttendance] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -122,10 +123,20 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
   };
 
   // Derived selected student details
+  const filteredStudentsForClass = useMemo(() => {
+    if (!selectedClassFilter) return [];
+
+    return students.filter((student) => {
+      const studentClass = (student.class || '').trim().toLowerCase();
+      const filterClass = selectedClassFilter.trim().toLowerCase();
+      return studentClass === filterClass;
+    });
+  }, [selectedClassFilter, students]);
+
   const selectedStudentDetails = useMemo(() => {
     if (!selectedStudentId) return null;
-    return students.find(s => s.id === selectedStudentId) || null;
-  }, [selectedStudentId, students]);
+    return filteredStudentsForClass.find(s => s.id === selectedStudentId) || null;
+  }, [filteredStudentsForClass, selectedStudentId]);
 
   // Handle Form Submission
   const handleGenerateTC = async (e: React.FormEvent) => {
@@ -151,6 +162,7 @@ export const TransferCertificates: React.FC<TransferCertificatesProps> = ({
       setIsGenerateModalOpen(false);
       
       // Reset Form fields
+      setSelectedClassFilter('');
       setSelectedStudentId('');
       setFormReason('Transfer');
       setFormLastAttendance(new Date().toISOString().split('T')[0]);
@@ -1079,10 +1091,35 @@ This is a computer-generated transfer certificate. Verified under school record 
       {isGenerateModalOpen && (
         <Modal
           isOpen={isGenerateModalOpen}
-          onClose={() => setIsGenerateModalOpen(false)}
+          onClose={() => {
+            setIsGenerateModalOpen(false);
+            setSelectedClassFilter('');
+            setSelectedStudentId('');
+          }}
           title="Generate Transfer Certificate"
         >
           <form onSubmit={handleGenerateTC} className="space-y-4 animate-fadeIn select-none text-xs font-bold text-slate-700">
+            
+            {/* Class First Selector */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-[10px] font-extrabold uppercase tracking-wide text-slate-400">Select Class</label>
+              <select
+                value={selectedClassFilter}
+                onChange={(e) => {
+                  setSelectedClassFilter(e.target.value);
+                  setSelectedStudentId('');
+                }}
+                required
+                className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 hover:bg-slate-50/80 border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 focus:bg-white text-slate-700 shadow-sm"
+              >
+                <option value="">-- Choose Class --</option>
+                {classesList.map((className) => (
+                  <option key={className} value={className}>
+                    {className}
+                  </option>
+                ))}
+              </select>
+            </div>
             
             {/* Student Dropdown Selector */}
             <div className="flex flex-col gap-1.5">
@@ -1091,15 +1128,23 @@ This is a computer-generated transfer certificate. Verified under school record 
                 value={selectedStudentId}
                 onChange={(e) => setSelectedStudentId(e.target.value)}
                 required
+                disabled={!selectedClassFilter}
                 className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 hover:bg-slate-50/80 border border-slate-200 rounded-xl outline-none cursor-pointer focus:border-blue-500 focus:bg-white text-slate-700 shadow-sm"
               >
-                <option value="">-- Choose Student Record --</option>
-                {students.map(student => (
+                <option value="">
+                  {selectedClassFilter ? '-- Choose Student Record --' : '-- Select Class First --'}
+                </option>
+                {filteredStudentsForClass.map(student => (
                   <option key={student.id} value={student.id}>
-                    {student.name} ({student.class || 'N/A'} - {student.admissionNo || 'N/A'})
+                    {student.name} ({student.admissionNo || 'N/A'})
                   </option>
                 ))}
               </select>
+              {selectedClassFilter && filteredStudentsForClass.length === 0 && (
+                <p className="text-[10px] font-medium text-amber-600">
+                  No students found for this class.
+                </p>
+              )}
             </div>
 
             {/* Read-Only Auto-filled Section */}
@@ -1229,7 +1274,11 @@ This is a computer-generated transfer certificate. Verified under school record 
               <Button
                 variant="outline"
                 fullWidth
-                onClick={() => setIsGenerateModalOpen(false)}
+                onClick={() => {
+                  setIsGenerateModalOpen(false);
+                  setSelectedClassFilter('');
+                  setSelectedStudentId('');
+                }}
                 type="button"
               >
                 Cancel

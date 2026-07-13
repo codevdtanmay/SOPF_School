@@ -1,6 +1,9 @@
 import studentModel from "../models/student.model.js";
 import feeStructureModel from "../models/feeStructure.js";
 import feePaymentModel from "../models/feePayment.model.js";
+import academicYearModel from "../models/academicYear.model.js";
+import enrollmentModel from "../models/enrollment.model.js";
+import mongoose from "mongoose";
 import computeInstallmentDetails from "../utils/installmentCalculator.js";
 import { sendFeeReceiptMessage } from "../services/whatsapp.service.js"
 import {
@@ -10,6 +13,8 @@ import {
   normalizeClassLabel,
   normalizeSectionLabel
 } from "../utils/feeLifecycle.js";
+import { resolveStudentPlacement } from "../utils/studentPlacement.js";
+import { resolveAcademicYearQuery } from "../utils/mongoQueryHelpers.js";
 
 const MONTH_LABELS = [
   "",
@@ -202,11 +207,12 @@ const hydrateLegacyFeePayment = async (payment) => {
     return payment;
   }
 
+  const placement = await resolveStudentPlacement(student, payment.academicYear || student.academicYear);
   const snapshot = {
     studentName: payment.studentName || student.userId?.name || "",
     admissionNo: payment.admissionNo || student.admissionNo || "",
-    className: payment.className || String(student.class || "").trim(),
-    section: payment.section || String(student.section || "").trim(),
+    className: payment.className || placement.className || "",
+    section: payment.section || placement.section || "",
     academicYear: payment.academicYear || normalizeAcademicYear(student.academicYear),
     feeStructureId: payment.feeStructureId || student.feeStructureId || null
   };
@@ -247,8 +253,9 @@ const collectFee = async (req, res) => {
     }
 
     const selectedAcademicYear = normalizeAcademicYear(academicYear || student.academicYear);
-    const selectedClassName = String(className || student.class || "").trim();
-    const selectedSection = String(section || student.section || "").trim();
+    const placement = await resolveStudentPlacement(student, academicYear || student.academicYear);
+    const selectedClassName = String(className || placement.className || "").trim();
+    const selectedSection = String(section || placement.section || "").trim();
 
     const feeStructureForSelectedYear = await findFeeStructureByCriteria({
       className: selectedClassName,
@@ -277,7 +284,8 @@ const collectFee = async (req, res) => {
       ...student.toObject(),
       class: selectedClassName,
       section: selectedSection,
-      academicYear: normalizedAcademicYear
+      academicYear: normalizedAcademicYear,
+      currentEnrollment: student.currentEnrollment || null
     };
 
     const receiptNo = await buildReceiptNo(paymentDate);
@@ -374,8 +382,9 @@ const getStudentFeeDetails = async (req, res) => {
       });
     }
 
+    const placement = await resolveStudentPlacement(student, req.query?.academicYear || student.academicYear);
     const requestedAcademicYear = normalizeAcademicYear(
-      req.query?.academicYear || student.academicYear
+      req.query?.academicYear || placement.academicYear || student.academicYear
     );
     const structure = await findFeeStructureByCriteria({
       student,
@@ -475,7 +484,13 @@ const getFeeDashboard = async (_req, res) => {
 
     const feeSummaries = await Promise.all(
       students.map(async (student) => {
-        const structure = await findMatchingFeeStructure(student);
+        const placement = await resolveStudentPlacement(student, student.academicYear);
+        const structure = await findMatchingFeeStructure({
+          ...student.toObject(),
+          class: placement.className,
+          section: placement.section,
+          academicYear: student.academicYear
+        });
         const { totalPaid } = await getStudentAnnualPayments(student._id, student.academicYear);
         const totalFee = Number(structure?.totalFee || student.totalFee || 0);
         const dueAmount = Math.max(0, totalFee - totalPaid);
@@ -521,45 +536,81 @@ const getAllFees = async (req, res) => {
       limit = 20
     } = req.query;
 
-    const filter = {
-      isDeleted: false
+    const requestedAcademicYearInput = normalizeAcademicYear(academicYear);
+    let academicYearDoc = null;
+
+    if (requestedAcademicYearInput) {
+      academicYearDoc = await academicYearModel.findOne(resolveAcademicYearQuery(requestedAcademicYearInput));
+    } else {
+      // No academic year specified, use current
+      academicYearDoc = await academicYearModel.findOne({ isCurrent: true });
+    }
+
+    if (requestedAcademicYearInput && !academicYearDoc) {
+      return res.status(400).json({
+        success: false,
+        message: `Academic year "${requestedAcademicYearInput}" does not exist`
+      });
+    }
+
+    const enrollmentQuery = {
+      status: "active",
+      ...(academicYearDoc ? { academicYear: academicYearDoc._id } : {})
     };
 
-    if (studentClass) {
-      filter.class = studentClass;
+    if (studentClass && studentClass !== "All") {
+      enrollmentQuery.class = studentClass;
     }
 
-    if (section) {
-      filter.section = section;
+    if (section && section !== "All") {
+      enrollmentQuery.section = section;
     }
 
-    if (academicYear) {
-      filter.academicYear = academicYear;
-    }
+    const enrollments = await enrollmentModel
+      .find(enrollmentQuery)
+      .populate({
+        path: "student",
+        match: { isDeleted: false },
+        populate: {
+          path: "userId",
+          select: "name email"
+        }
+      })
+      .populate("academicYear", "label isCurrent")
+      .sort({ class: 1, section: 1, rollNo: 1, createdAt: 1 });
 
-    const skip = (Number(page) - 1) * Number(limit);
-
-    let students = await studentModel
-      .find(filter)
-      .populate("userId", "name email")
-      .sort({ class: 1, section: 1, rollNo: 1 })
-      .skip(skip)
-      .limit(Number(limit));
+    let rows = enrollments
+      .filter((enrollment) => enrollment.student)
+      .map((enrollment) => ({
+        enrollment,
+        student: enrollment.student,
+        className: enrollment.class || "",
+        sectionName: enrollment.section || "",
+        academicYearLabel: enrollment.academicYear?.label || academicYearDoc?.label || requestedAcademicYearInput || "",
+        rollNo: enrollment.rollNo ?? enrollment.student?.rollNo ?? null
+      }));
 
     if (search) {
       const keyword = search.toLowerCase();
-      students = students.filter((student) =>
+      rows = rows.filter(({ student }) =>
         student.userId?.name?.toLowerCase().includes(keyword) ||
         student.admissionNo?.toLowerCase().includes(keyword)
       );
     }
 
-    const totalStudents = await studentModel.countDocuments(filter);
+    const totalStudents = rows.length;
+    const skip = (Number(page) - 1) * Number(limit);
+    rows = rows.slice(skip, skip + Number(limit));
 
     const formattedData = await Promise.all(
-      students.map(async (student) => {
-        const structure = await findMatchingFeeStructure(student);
-        const { totalPaid, payments } = await getStudentAnnualPayments(student._id, student.academicYear);
+      rows.map(async ({ enrollment, student, className, sectionName, academicYearLabel, rollNo }) => {
+        const structure = await findMatchingFeeStructure({
+          ...student.toObject(),
+          class: className,
+          section: sectionName,
+          academicYear: academicYearLabel
+        });
+        const { totalPaid, payments } = await getStudentAnnualPayments(student._id, academicYearLabel);
         const totalFee = Number(structure?.totalFee || student.totalFee || 0);
         const dueAmount = Math.max(0, totalFee - totalPaid);
         const currentStatus = dueAmount <= 0 ? "Paid" : totalPaid > 0 ? "Partial" : "Pending";
@@ -582,11 +633,11 @@ const getAllFees = async (req, res) => {
           name: student.userId?.name || "",
           email: student.userId?.email || "",
           admissionNo: student.admissionNo,
-          class: student.class,
-          section: student.section,
-          className: student.class,
-          academicYear: normalizeAcademicYear(student.academicYear),
-          rollNo: student.rollNo,
+          class: className,
+          section: sectionName,
+          className,
+          academicYear: academicYearLabel,
+          rollNo,
           totalFee,
           paidAmount: totalPaid,
           dueAmount,
@@ -596,7 +647,7 @@ const getAllFees = async (req, res) => {
       })
     );
 
-    const filteredData = status
+    const filteredData = status && status !== "All"
       ? formattedData.filter((row) => row.status === status)
       : formattedData;
 

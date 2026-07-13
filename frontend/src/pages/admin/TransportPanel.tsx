@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bus,
@@ -72,6 +72,8 @@ const MONTHS = [
 
 const CURRENT_MONTH = MONTHS[new Date().getMonth()];
 const CURRENT_YEAR = String(new Date().getFullYear());
+const getCurrentCalendarMonth = () => MONTHS[new Date().getMonth()];
+const getCurrentCalendarYear = () => String(new Date().getFullYear());
 
 export const TransportPanel: React.FC<TransportPanelProps> = ({
   allStudents,
@@ -133,11 +135,14 @@ const [routeError, setRouteError] = useState("");
   const [collectSuccessMessage, setCollectSuccessMessage] = useState('');
 
   const [reportType, setReportType] = useState<ReportType>('monthly');
-  const [reportMonth, setReportMonth] = useState(CURRENT_MONTH);
-  const [reportYear, setReportYear] = useState(CURRENT_YEAR);
+  const [currentCalendarMonth, setCurrentCalendarMonth] = useState(getCurrentCalendarMonth);
+  const [currentCalendarYear, setCurrentCalendarYear] = useState(getCurrentCalendarYear);
+  const previousCalendarRef = useRef({ month: currentCalendarMonth, year: currentCalendarYear });
+  const [reportMonth, setReportMonth] = useState(currentCalendarMonth);
+  const [reportYear, setReportYear] = useState(currentCalendarYear);
   const [reportClassFilter, setReportClassFilter] = useState('All');
-  const [collectFeeMonth, setCollectFeeMonth] = useState(CURRENT_MONTH);
-  const [collectFeeYear, setCollectFeeYear] = useState(CURRENT_YEAR);
+  const [collectFeeMonth, setCollectFeeMonth] = useState(currentCalendarMonth);
+  const [collectFeeYear, setCollectFeeYear] = useState(currentCalendarYear);
 
   const getReceiptPaidNow = (receipt: TransportFeePayment) =>
     receipt.currentPaidAmount ?? receipt.paidAmount;
@@ -162,7 +167,7 @@ const [routeError, setRouteError] = useState("");
   }, [transports]);
 
   const yearOptions = useMemo(() => {
-    const currentYearNumber = Number(CURRENT_YEAR);
+    const currentYearNumber = Number(currentCalendarYear);
     const paymentYears = payments.map((payment) => Number(payment.year)).filter((year) => !Number.isNaN(year));
     const maxYear = 2035;
     const years = new Set<number>([
@@ -172,7 +177,39 @@ const [routeError, setRouteError] = useState("");
       ...paymentYears
     ]);
     return Array.from(years).sort((a, b) => b - a).map(String);
-  }, [payments]);
+  }, [payments, currentCalendarYear]);
+
+  useEffect(() => {
+    const syncCalendarFilters = () => {
+      const nextMonth = getCurrentCalendarMonth();
+      const nextYear = getCurrentCalendarYear();
+      const previous = previousCalendarRef.current;
+
+      setCurrentCalendarMonth(nextMonth);
+      setCurrentCalendarYear(nextYear);
+
+      setReportMonth((current) => (current === previous.month ? nextMonth : current));
+      setCollectFeeMonth((current) => (current === previous.month ? nextMonth : current));
+      setReportYear((current) => (current === previous.year ? nextYear : current));
+      setCollectFeeYear((current) => (current === previous.year ? nextYear : current));
+
+      previousCalendarRef.current = { month: nextMonth, year: nextYear };
+    };
+
+    const now = new Date();
+    const nextMidnight = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+      0,
+      0,
+      1,
+      0
+    );
+    const timeout = window.setTimeout(syncCalendarFilters, nextMidnight.getTime() - now.getTime());
+
+    return () => window.clearTimeout(timeout);
+  }, [currentCalendarMonth, currentCalendarYear]);
 
   const resetAssignmentForm = useCallback((presetStudentId = '') => {
     setFormStudentId(presetStudentId);

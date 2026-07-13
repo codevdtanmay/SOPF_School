@@ -111,61 +111,59 @@ const getAllTransportStudents = async (req, res) => {
       });
 
     const formattedTransports = await Promise.all(
+      transports
+        .filter((transport) => Boolean(transport.studentId))
+        .map(async (transport) => {
+          const payment = await transportPaymentModel.findOne({
+            studentId: transport.studentId._id,
+            month: currentMonth,
+            year: currentYear
+          });
 
-      transports.map(async (transport) => {
+          return {
 
-        const payment = await transportPaymentModel.findOne({
-          studentId: transport.studentId._id,
-          month: currentMonth,
-          year: currentYear
-        });
+            id: transport._id,
 
-        return {
+            studentId: transport.studentId?._id,
 
-          id: transport._id,
+            name: transport.studentId?.userId?.name,
 
-          studentId: transport.studentId?._id,
+            email: transport.studentId?.userId?.email,
 
-          name: transport.studentId?.userId?.name,
+            admissionNo: transport.studentId?.admissionNo,
 
-          email: transport.studentId?.userId?.email,
+            className: payment?.className
+              ? `${payment.className}${payment.section ? `-${payment.section}` : ""}`
+              : `${transport.studentId?.class}-${transport.studentId?.section}`,
 
-          admissionNo: transport.studentId?.admissionNo,
+            routeName: transport.routeName,
 
-          className: payment?.className
-            ? `${payment.className}${payment.section ? `-${payment.section}` : ""}`
-            : `${transport.studentId?.class}-${transport.studentId?.section}`,
+            pickupPoint: transport.pickupPoint,
 
-          routeName: transport.routeName,
+            monthlyCharge: transport.monthlyCharge,
 
-          pickupPoint: transport.pickupPoint,
+            joiningDate: transport.joiningDate,
 
-          monthlyCharge: transport.monthlyCharge,
+            // Preserve transport assignment status for roster UIs.
+            status: transport.status,
 
-          joiningDate: transport.joiningDate,
+            // Expose current-month payment state separately.
+            paymentStatus: payment ? payment.status : "Pending",
 
-          // Preserve transport assignment status for roster UIs.
-          status: transport.status,
+            paidAmount: payment ? payment.paidAmount : 0,
 
-          // Expose current-month payment state separately.
-          paymentStatus: payment ? payment.status : "Pending",
+            dueAmount: payment
+              ? payment.dueAmount
+              : transport.monthlyCharge,
 
-          paidAmount: payment ? payment.paidAmount : 0,
+            receiptNo: payment?.receiptNo || null,
 
-          dueAmount: payment
-            ? payment.dueAmount
-            : transport.monthlyCharge,
+            academicYear: payment?.academicYear || transport.studentId?.academicYear || "",
 
-          receiptNo: payment?.receiptNo || null,
+            paymentDate: payment?.paymentDate || null
 
-          academicYear: payment?.academicYear || transport.studentId?.academicYear || "",
-
-          paymentDate: payment?.paymentDate || null
-
-        };
-
-      })
-
+          };
+        })
     );
 
     return res.status(200).json({

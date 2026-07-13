@@ -379,6 +379,9 @@ const getPendingStudents = async (req, res) => {
     const pending = [];
 
     for (const transport of transports) {
+      if (!transport.studentId) {
+        continue;
+      }
 
       const payment =
         await transportPaymentModel.findOne({
@@ -396,8 +399,8 @@ const getPendingStudents = async (req, res) => {
 
       if (!payment || payment.status !== "Paid") {
         pending.push({
-          student: transport.studentId.userId.name,
-          admissionNo: transport.studentId.admissionNo,
+          student: transport.studentId.userId?.name || "Unknown Student",
+          admissionNo: transport.studentId.admissionNo || "",
           route: transport.routeName,
           monthlyCharge: transport.monthlyCharge,
           status: payment ? payment.status : "Pending",

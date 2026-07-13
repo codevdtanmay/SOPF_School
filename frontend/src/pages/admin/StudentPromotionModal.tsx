@@ -44,10 +44,8 @@ const CLASS_ORDER = [
   '12th'
 ];
 
-const academicYearFallback = () => {
-  const year = new Date().getFullYear();
-  return `${year}-${String(year + 1).slice(-2)}`;
-};
+const sortAcademicYearsDesc = (a: string, b: string) =>
+  b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
 
 const normalizeClassLabel = (value?: string) =>
   String(value || '').trim().replace(/\s+/g, ' ');
@@ -78,11 +76,10 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
   currentUserName = '',
   onSuccess
 }) => {
-  const academicYearOptions = useMemo(() => {
-    const fallback = academicYearFallback();
-    const merged = new Set([fallback, ...academicYears.filter(Boolean)]);
-    return Array.from(merged);
-  }, [academicYears]);
+  const academicYearOptions = useMemo(
+    () => Array.from(new Set(academicYears.filter(Boolean))).sort(sortAcademicYearsDesc),
+    [academicYears]
+  );
 
   const classOptions = useMemo(() => {
     const roster = students;
@@ -91,7 +88,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
     roster.forEach((student) => {
       const className = normalizeClassLabel(student.class);
       const section = normalizeClassLabel(student.section);
-      const academicYear = normalizeAcademicYear(student.academicYear) || academicYearFallback();
+      const academicYear = normalizeAcademicYear(student.academicYear);
       if (!className) return;
       const key = `${academicYear}::${className}::${section}`;
       if (!map.has(key)) {
@@ -100,7 +97,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
     });
 
     return Array.from(map.values()).sort((a, b) => {
-      const yearDiff = b.academicYear.localeCompare(a.academicYear, undefined, { numeric: true, sensitivity: 'base' });
+      const yearDiff = sortAcademicYearsDesc(a.academicYear, b.academicYear);
       if (yearDiff !== 0) return yearDiff;
       const classDiff = classSortValue(a.className) - classSortValue(b.className);
       if (classDiff !== 0) return classDiff;
@@ -144,10 +141,10 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
     }
 
     const initialClass = classOptions[0];
-    const initialAcademicYear = initialClass?.academicYear || academicYearOptions[0] || academicYearFallback();
+    const initialAcademicYear = initialClass?.academicYear || academicYearOptions[0] || '';
     const initialDestinationYear = academicYearOptions.find((year) => year !== initialAcademicYear)
       || academicYearOptions[0]
-      || academicYearFallback();
+      || '';
     const currentClassIndex = CLASS_ORDER.findIndex(
       (item) => item.toLowerCase() === normalizeClassLabel(initialClass?.className).toLowerCase()
     );
@@ -174,7 +171,7 @@ export const StudentPromotionModal: React.FC<StudentPromotionModalProps> = ({
   const currentRoster = useMemo(() => {
     return students.filter((student) => {
       const classMatches = normalizeClassLabel(student.class).toLowerCase() === currentClass.toLowerCase();
-      const academicYearMatches = normalizeAcademicYear(student.academicYear || academicYearFallback()) === currentAcademicYear;
+      const academicYearMatches = normalizeAcademicYear(student.academicYear) === currentAcademicYear;
       const sectionMatches = currentSection
         ? normalizeClassLabel(student.section).toLowerCase() === currentSection.toLowerCase()
         : true;

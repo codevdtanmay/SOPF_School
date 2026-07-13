@@ -1,5 +1,6 @@
 import tcModel from "../models/tc.model.js";
 import studentModel from "../models/student.model.js";
+import { resolveStudentPlacement } from "../utils/studentPlacement.js";
 
 const generateTC = async (req, res) => {
   try {
@@ -68,7 +69,7 @@ const generateTC = async (req, res) => {
 
       admissionDate: student.joiningDate,
 
-      classLeaving: student.class,
+      classLeaving: (await resolveStudentPlacement(student, student.academicYear)).className,
 
       promotedTo,
 
@@ -117,45 +118,33 @@ const getAllTCs = async (req, res) => {
       );
     }
 
-    const formattedTCs = tcs.map(tc => ({
-  id: tc._id,
+    const formattedTCs = await Promise.all(
+      tcs.map(async (tc) => {
+        const placement = await resolveStudentPlacement(tc.studentId, tc.studentId?.academicYear);
 
-  tcNumber: tc.tcNumber,
-
-  issueDate: tc.issueDate,
-
-  studentId: tc.studentId?._id,
-
-  studentName: tc.studentId?.userId?.name || "",
-
-  admissionNo: tc.studentId?.admissionNo || "",
-
-  classLeaving: tc.classLeaving || "",
-
-  section: tc.studentId?.section || "",
-
-  fatherName: tc.studentId?.fatherName || "",
-
-  motherName: tc.studentId?.motherName || "",
-
-  joiningDate: tc.studentId?.joiningDate || "",
-
-  category: tc.studentId?.category || "",
-
-  reason: tc.reason || "",
-
-  conduct: tc.conduct || "",
-
-  lastAttendanceDate: tc.lastAttendanceDate || "",
-
-  promotedTo: tc.promotedTo || "",
-
-  remarks: tc.remarks || "",
-
-  issuedBy: tc.issuedBy || "",
-
-  status: tc.status
-}));
+        return {
+          id: tc._id,
+          tcNumber: tc.tcNumber,
+          issueDate: tc.issueDate,
+          studentId: tc.studentId?._id,
+          studentName: tc.studentId?.userId?.name || "",
+          admissionNo: tc.studentId?.admissionNo || "",
+          classLeaving: tc.classLeaving || placement.className || "",
+          section: placement.section || "",
+          fatherName: tc.studentId?.fatherName || "",
+          motherName: tc.studentId?.motherName || "",
+          joiningDate: tc.studentId?.joiningDate || "",
+          category: tc.studentId?.category || "",
+          reason: tc.reason || "",
+          conduct: tc.conduct || "",
+          lastAttendanceDate: tc.lastAttendanceDate || "",
+          promotedTo: tc.promotedTo || "",
+          remarks: tc.remarks || "",
+          issuedBy: tc.issuedBy || "",
+          status: tc.status
+        };
+      })
+    );
 
     return res.status(200).json({
       success: true,
@@ -194,6 +183,8 @@ const getTCById = async (req, res) => {
       });
     }
 
+    const placement = await resolveStudentPlacement(tc.studentId, tc.studentId?.academicYear);
+
     const formattedTC = {
       id: tc._id,
 
@@ -208,9 +199,8 @@ const getTCById = async (req, res) => {
 
         admissionNo: tc.studentId.admissionNo,
 
-        class: tc.studentId.class,
-
-        section: tc.studentId.section,
+        class: placement.className,
+        section: placement.section,
 
         fatherName: tc.studentId.fatherName,
 

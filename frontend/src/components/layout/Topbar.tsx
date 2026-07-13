@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { 
   Search, 
   Bell, 
@@ -7,11 +7,12 @@ import {
   User, 
   Settings, 
   LogOut,
-  Calendar,
   Sparkles,
-  Info
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import Modal from '../common/Modal';
+import Button from '../common/Button';
+import { studentApi } from '../../api/studentApi';
 
 interface TopbarProps {
   setIsMobileOpen: (open: boolean) => void;
@@ -27,6 +28,12 @@ export const Topbar: React.FC<TopbarProps> = ({
   const { logout, user } = useAuth();
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showNextSessionModal, setShowNextSessionModal] = useState(false);
+  const [creatingNextSession, setCreatingNextSession] = useState(false);
+  const [settingCurrentSession, setSettingCurrentSession] = useState(false);
+  const [nextSessionError, setNextSessionError] = useState('');
+  const [academicYears, setAcademicYears] = useState<{ id: string; label: string; isCurrent: boolean }[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState('');
   const currentYear = new Date().getFullYear();
 
   // Hardcoded notifications corresponding to latest server notice updates
@@ -35,6 +42,118 @@ export const Topbar: React.FC<TopbarProps> = ({
     { id: 2, text: 'Dr. Clara Rivers join date scheduled for tomorrow', type: 'system', read: false, time: '2 hours ago' },
     { id: 3, text: 'Quarterly Audit: Financial ledger updated', type: 'fee', read: true, time: '1 day ago' },
   ];
+
+  useEffect(() => {
+    if (!showNextSessionModal) {
+      setNextSessionError('');
+      return;
+    }
+
+    let cancelled = false;
+    const loadAcademicYears = async () => {
+      try {
+        const years = await studentApi.getAcademicYears();
+        if (cancelled) {
+          return;
+        }
+
+        setAcademicYears(years.map((year) => ({
+          id: year.id,
+          label: year.label,
+          isCurrent: year.isCurrent
+        })));
+        const currentYearEntry = years.find((year) => year.isCurrent) || years[0];
+        setCurrentSessionId(currentYearEntry?.id || '');
+      } catch (error: any) {
+        if (!cancelled) {
+          setNextSessionError(error?.message || 'Failed to load academic sessions');
+        }
+      }
+    };
+
+    loadAcademicYears();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showNextSessionModal]);
+
+  const handleAddNextSession = async () => {
+    return handleSessionAction(false);
+  };
+
+  const handleCreateAndSetCurrentSession = async () => {
+    return handleSessionAction(true);
+  };
+
+  const handleSetExistingCurrentSession = async () => {
+    if (!currentSessionId) {
+      setNextSessionError('Select a session first.');
+      return;
+    }
+
+    const selected = academicYears.find((year) => year.id === currentSessionId);
+    if (!selected) {
+      setNextSessionError('Selected session not found.');
+      return;
+    }
+
+    if (selected.isCurrent) {
+      setNextSessionError(`"${selected.label}" is already current.`);
+      return;
+    }
+
+    setSettingCurrentSession(true);
+    setNextSessionError('');
+
+    try {
+      await studentApi.setCurrentAcademicYear(selected.id);
+      setShowNextSessionModal(false);
+      setShowProfileDropdown(false);
+      window.dispatchEvent(
+        new CustomEvent('school:academic-year-updated', {
+          detail: {
+            message: `Academic year "${selected.label}" set as current`
+          }
+        })
+      );
+    } catch (error: any) {
+      setNextSessionError(
+        error?.response?.data?.message || error?.message || 'Failed to update the current academic year'
+      );
+    } finally {
+      setSettingCurrentSession(false);
+    }
+  };
+
+  const handleSessionAction = async (setCurrent: boolean) => {
+    setCreatingNextSession(true);
+    setNextSessionError('');
+
+    try {
+      const response = await studentApi.addNextAcademicYear();
+      if (setCurrent && response.academicYear?.id) {
+        await studentApi.setCurrentAcademicYear(response.academicYear.id);
+      }
+      setShowNextSessionModal(false);
+      setShowProfileDropdown(false);
+      window.dispatchEvent(
+        new CustomEvent('school:academic-year-updated', {
+          detail: {
+            message: setCurrent
+              ? `Academic year "${response.academicYear?.label || 'selected'}" set as current`
+              : response.message || 'Next academic year created successfully'
+          }
+        })
+      );
+    } catch (error: any) {
+      setNextSessionError(
+        error?.response?.data?.message || error?.message || 'Failed to create the next academic year'
+      );
+    } finally {
+      setCreatingNextSession(false);
+    }
+  };
 
   return (
     <header className="h-16 border-b border-slate-200/80 bg-white/85 backdrop-blur-md sticky top-0 z-20 px-4 md:px-6 flex items-center justify-between gap-4">
@@ -136,6 +255,16 @@ export const Topbar: React.FC<TopbarProps> = ({
                     <Settings size={14} className="text-slate-400" />
                     <span>System Sync</span>
                   </div>
+                  <button
+                    onClick={() => {
+                      setShowProfileDropdown(false);
+                      setShowNextSessionModal(true);
+                    }}
+                    className="flex items-center w-full gap-2 px-3 py-1.5 text-xs text-blue-700 hover:text-blue-950 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                  >
+                    <Sparkles size={14} className="text-blue-500" />
+                    <span className="font-semibold">Add next session</span>
+                  </button>
                 </div>
 
                 <div className="border-t border-slate-100 my-1 px-1">
@@ -152,6 +281,90 @@ export const Topbar: React.FC<TopbarProps> = ({
           )}
         </div>
       </div>
+
+      <Modal
+        isOpen={showNextSessionModal}
+        onClose={() => {
+          if (!creatingNextSession) {
+            setShowNextSessionModal(false);
+          }
+        }}
+        title="Add next academic session"
+        size="md"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setShowNextSessionModal(false)}
+              disabled={creatingNextSession || settingCurrentSession}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleCreateAndSetCurrentSession}
+              isLoading={creatingNextSession || settingCurrentSession}
+              leftIcon={<Sparkles size={14} />}
+            >
+              Create & Set Current
+            </Button>
+            <Button
+              onClick={handleAddNextSession}
+              isLoading={creatingNextSession}
+              leftIcon={<Sparkles size={14} />}
+            >
+              Create next session
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4">
+            <p className="text-sm font-semibold text-slate-900">This creates the next academic year only.</p>
+            <p className="mt-1 text-xs leading-relaxed text-slate-600">
+              The new session is created as inactive. An admin can mark it current later.
+            </p>
+          </div>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-800">
+            Promotion, fees, and attendance will continue to use the currently selected year until you switch it. You can also create the next session and mark it current from this modal.
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Mark an existing session current</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Use this if the new session already exists and you want to activate it later.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <select
+                value={currentSessionId}
+                onChange={(e) => setCurrentSessionId(e.target.value)}
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:border-blue-500 bg-white"
+              >
+                <option value="">Select a session</option>
+                {academicYears.map((year) => (
+                  <option key={year.id} value={year.id}>
+                    {year.label}{year.isCurrent ? ' (Current)' : ''}
+                  </option>
+                ))}
+              </select>
+              <Button
+                variant="outline"
+                onClick={handleSetExistingCurrentSession}
+                isLoading={settingCurrentSession}
+                disabled={!currentSessionId || settingCurrentSession}
+              >
+                Set Current
+              </Button>
+            </div>
+          </div>
+          {nextSessionError && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+              {nextSessionError}
+            </div>
+          )}
+        </div>
+      </Modal>
     </header>
   );
 };

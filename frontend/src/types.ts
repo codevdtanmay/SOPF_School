@@ -64,6 +64,21 @@ export interface Student {
     branchName?: string;
   };
   usesTransport?: boolean;
+  currentEnrollment?: {
+    id?: string;
+    class?: string;
+    section?: string;
+    academicYear?: string;
+    status?: string;
+  } | null;
+}
+
+export interface AcademicYear {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  isCurrent: boolean;
 }
 
 export interface PromotionHistoryEntry {

@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon dev.js"
+    "dev": "nodemon dev.js",
+    "migrate:enrollments": "node scripts/migrate-enrollments.js"
   },
   "keywords": [],
   "author": "",

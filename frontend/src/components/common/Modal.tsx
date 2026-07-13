@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import Button from './Button';
 
@@ -36,6 +37,8 @@ export const Modal: React.FC<ModalProps> = ({
 
   if (!isOpen) return null;
 
+  const modalRoot = typeof document !== 'undefined' ? document.body : null;
+
   const sizeClasses = {
     sm: 'max-w-md',
     md: 'max-w-lg',
@@ -43,8 +46,8 @@ export const Modal: React.FC<ModalProps> = ({
     xl: 'max-w-4xl'
   };
 
-  return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+  const modalContent = (
+    <div className="fixed inset-0 z-[9999] flex items-start justify-center p-3 sm:p-4 overflow-y-auto">
       {/* Backdrop */}
       <div 
         className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300"
@@ -53,7 +56,7 @@ export const Modal: React.FC<ModalProps> = ({
       
       {/* Modal Card wrapper */}
       <div 
-        className={`relative w-full bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden transform transition-all duration-300 scale-100 z-10 py-5 ${sizeClasses[size]}`}
+        className={`relative w-full bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden transform transition-all duration-300 scale-100 z-10 py-5 flex flex-col max-h-[calc(100vh-1.5rem)] sm:max-h-[calc(100vh-2rem)] ${sizeClasses[size]}`}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 pb-4 border-b border-slate-100">
@@ -69,7 +72,7 @@ export const Modal: React.FC<ModalProps> = ({
         </div>
 
         {/* Scrollable Content */}
-        <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
+        <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
           {children}
         </div>
 
@@ -82,5 +85,7 @@ export const Modal: React.FC<ModalProps> = ({
       </div>
     </div>
   );
+
+  return modalRoot ? createPortal(modalContent, modalRoot) : modalContent;
 };
 export default Modal;

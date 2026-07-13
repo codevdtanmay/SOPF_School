@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Users, 
   GraduationCap, 
@@ -66,7 +66,7 @@ import { feeStructureApi } from '../../api/feeStructureApi';
 import { feeApi } from '../../api/feeApi';
 import { transportApi } from '../../modules/transport/api/transportApi';
 import { useAuth } from '../../context/AuthContext';
-import { DashboardStats, Notice, Activity, FeeSummary, Student, Teacher, FeeStructure, PromotionHistoryEntry, FinancialHistoryEntry } from '../../types';
+import { AcademicYear, DashboardStats, Notice, Activity, FeeSummary, Student, Teacher, FeeStructure, PromotionHistoryEntry, FinancialHistoryEntry } from '../../types';
 
 interface AdminDashboardProps {
   currentTab: string;
@@ -81,17 +81,11 @@ interface ReportColumn {
   category: 'Basic Information' | 'Personal Information' | 'Parent Information' | 'Government IDs' | 'Address' | 'Fee Information' | 'Transport' | 'Bank Details';
 }
 
-const CURRENT_YEAR = new Date().getFullYear();
-const CURRENT_YEAR_LABEL = String(CURRENT_YEAR);
 const CURRENT_MONTH_LABEL = new Date().toLocaleString('en-US', { month: 'long' });
-const CURRENT_ACADEMIC_SESSION = `${CURRENT_YEAR}-${String(CURRENT_YEAR + 1).slice(-2)}`;
-const PREVIOUS_ACADEMIC_SESSION = `${CURRENT_YEAR - 1}-${String(CURRENT_YEAR).slice(-2)}`;
-const HISTORY_YEAR_OPTIONS = [
-  PREVIOUS_ACADEMIC_SESSION,
-  CURRENT_ACADEMIC_SESSION,
-  `${CURRENT_YEAR + 1}-${String(CURRENT_YEAR + 2).slice(-2)}`,
-  `${CURRENT_YEAR + 2}-${String(CURRENT_YEAR + 3).slice(-2)}`
-];
+const getCurrentCalendarMonth = () => new Date().toLocaleString('en-US', { month: 'long' });
+const getCurrentCalendarYear = () => String(new Date().getFullYear());
+const sortAcademicYearsDesc = (a: string, b: string) =>
+  b.localeCompare(a, undefined, { numeric: true, sensitivity: 'base' });
 
 const FINANCIAL_YEAR_MONTHS = [
   'July',
@@ -157,6 +151,43 @@ const REPORT_COLUMNS: ReportColumn[] = [
 const DEFAULT_REPORT_COLUMNS = ['name', 'admissionNo', 'class', 'rollNo'];
 const LOCAL_STORAGE_REPORT_COLS_KEY = 'school_student_report_selected_columns';
 
+const createDefaultStudentForm = () => ({
+  name: '',
+  email: '',
+  password: 'password123',
+  admissionNo: '',
+  class: '',
+  academicYear: '',
+  rollNo: '',
+  fatherName: '',
+  motherName: '',
+  phone: '',
+  gender: 'Male',
+  dateOfBirth: '',
+  joiningDate: '',
+  category: 'General' as 'General' | 'OBC' | 'SC' | 'ST',
+  aadharNo: '',
+  samagraId: '',
+  apaarId: '',
+  panNo: '',
+  usesTransport: 'No' as 'Yes' | 'No',
+  address: {
+    village: '',
+    postOffice: '',
+    tehsil: 'Balaghat',
+    district: 'Balaghat',
+    state: 'Madhya Pradesh',
+    pincode: '481551'
+  },
+  bankDetails: {
+    accountHolderName: '',
+    bankName: '',
+    accountNumber: '',
+    ifscCode: '',
+    branchName: ''
+  }
+});
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
   currentTab, 
   setCurrentTab,
@@ -172,7 +203,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [students, setStudents] = useState<Student[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [feeStructures, setFeeStructures] = useState<FeeStructure[]>([]);
+  const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
   const [promotionSuccessMessage, setPromotionSuccessMessage] = useState('');
+  const [academicYearSuccessMessage, setAcademicYearSuccessMessage] = useState('');
+  const [currentCalendarMonth, setCurrentCalendarMonth] = useState(getCurrentCalendarMonth);
+  const [currentCalendarYear, setCurrentCalendarYear] = useState(getCurrentCalendarYear);
   const [isFeeStructureModalOpen, setIsFeeStructureModalOpen] = useState(false);
   const [editingFeeStructureId, setEditingFeeStructureId] = useState<string | null>(null);
   const [selectedFeeStructure, setSelectedFeeStructure] = useState<FeeStructure | null>(null);
@@ -183,7 +218,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     computerFee: '',
     examFee: '',
     culturalActivityFee: '',
-    academicSession: CURRENT_ACADEMIC_SESSION,
+    academicSession: '',
     juneAmount: '',
     septemberAmount: '',
     decemberAmount: '',
@@ -230,14 +265,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   
   const [feeSearchQuery, setFeeSearchQuery] = useState('');
   const [feeClassFilter, setFeeClassFilter] = useState('All');
+  const [feeStatusFilter, setFeeStatusFilter] = useState('All');
+  const [feeAcademicYearFilter, setFeeAcademicYearFilter] = useState('');
+  const [studentAcademicYearFilter, setStudentAcademicYearFilter] = useState('');
   const [studentClassFilter, setStudentClassFilter] = useState('All');
+  const [studentSectionFilter, setStudentSectionFilter] = useState('All');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
   const [allStudents, setAllStudents] = useState<Student[]>([]);
   const [selectedViewStudent, setSelectedViewStudent] = useState<Student | null>(null);
   const [isViewStudentModalOpen, setIsViewStudentModalOpen] = useState(false);
   const [isPromotionModalOpen, setIsPromotionModalOpen] = useState(false);
   const [feeStructureSearchQuery, setFeeStructureSearchQuery] = useState('');
-  const [feeStructureYearFilter, setFeeStructureYearFilter] = useState('All');
+  const [feeStructureYearFilter, setFeeStructureYearFilter] = useState('');
+
+  const mapFeeLedgerRecords = useCallback((ledgerStudents: any[] = []) => {
+    return ledgerStudents.map((s: any) => ({
+      id: s.studentId,
+      name: s.name,
+      className: s.class || s.className || 'General',
+      academicYear: s.academicYear || '',
+      dueAmount: s.dueAmount != null ? s.dueAmount : 0,
+      totalFee: s.totalFee != null ? s.totalFee : 0,
+      paidAmount: s.paidAmount != null ? s.paidAmount : 0,
+      status: s.status === 'Unpaid' ? 'Pending' : (s.status === 'Paid' ? 'Paid' : (s.status || 'Pending')),
+      admissionNo: s.admissionNo || '',
+      category: s.category || 'General',
+      village: s.address?.village || '',
+      paymentHistory: Array.isArray(s.paymentHistory) ? s.paymentHistory.map((ph: any) => ({
+        date: ph.date || '',
+        amount: ph.amount != null ? ph.amount : 0,
+        receiptNo: ph.receiptNo || '',
+        academicYear: ph.academicYear || ''
+      })) : []
+    }));
+  }, []);
 
   const feeClassOptions = useMemo(() => {
     const classSet = new Set<string>();
@@ -256,6 +317,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     return Array.from(classSet).sort((a, b) => a.localeCompare(b));
   }, [allStudents, feeRecords]);
+
+  const academicYearLabels = useMemo(
+    () => Array.from(new Set(academicYears.map((year) => year.label).filter(Boolean))),
+    [academicYears]
+  );
+
+  const preferredAcademicYearLabel = useMemo(
+    () => academicYears.find((year) => year.isCurrent)?.label || academicYears[0]?.label || '',
+    [academicYears]
+  );
+  const activeFeeStructureYearFilter = feeStructureYearFilter || preferredAcademicYearLabel;
+
+  const feeAcademicYearOptions = useMemo(
+    () => [...academicYearLabels].sort(sortAcademicYearsDesc),
+    [academicYearLabels]
+  );
+
+  const studentSectionOptions = useMemo(() => {
+    const sectionSet = new Set<string>();
+
+    allStudents.forEach((student) => {
+      if (student.section) {
+        sectionSet.add(student.section);
+      }
+    });
+
+    return Array.from(sectionSet).sort((a, b) => a.localeCompare(b));
+  }, [allStudents]);
   
   // Backend Filter, Sorting & Pagination States
   const [categoryFilter, setCategoryFilter] = useState("All");
@@ -309,6 +398,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // EDIT STATE HOLDERS
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+  const [editingStudentOriginalUsesTransport, setEditingStudentOriginalUsesTransport] = useState<boolean | null>(null);
   const [editingTeacherId, setEditingTeacherId] = useState<string | null>(null);
   const [usesTransportPresetStudentId, setUsesTransportPresetStudentId] = useState<string | null>(null);
 
@@ -316,10 +406,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [feeHistory, setFeeHistory] = useState<any[]>([]);
   const [totalCollection, setTotalCollection] = useState<number>(0);
   const [totalPayments, setTotalPayments] = useState<number>(0);
-  const [historyMonth, setHistoryMonth] = useState<string>(CURRENT_MONTH_LABEL);
-  const [historyYear, setHistoryYear] = useState<string>(CURRENT_ACADEMIC_SESSION);
+  const [historyMonth, setHistoryMonth] = useState<string>(currentCalendarMonth);
+  const [historyYear, setHistoryYear] = useState<string>('');
   const [historyPaymentMethod, setHistoryPaymentMethod] = useState<string>('All');
   const [historyClassFilter, setHistoryClassFilter] = useState<string>('All');
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('All');
+  const [historyAcademicYearFilter, setHistoryAcademicYearFilter] = useState<string>('All');
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<any | null>(null);
   const [isHistoryDetailModalOpen, setIsHistoryDetailModalOpen] = useState(false);
   const [studentSearchKeyword, setStudentSearchKeyword] = useState('');
@@ -342,43 +434,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isNoticeModalOpen, setIsNoticeModalOpen] = useState(false);
   const [isFeeModalOpen, setIsFeeModalOpen] = useState(false);
   const [feeModalSearchQuery, setFeeModalSearchQuery] = useState('');
+  const [isStudentFormErrorModalOpen, setIsStudentFormErrorModalOpen] = useState(false);
+  const [studentFormErrorTitle, setStudentFormErrorTitle] = useState('');
+  const [studentFormErrorMessages, setStudentFormErrorMessages] = useState<string[]>([]);
 
   // Form Field States
-  const [studentForm, setStudentForm] = useState({
-    name: '',
-    email: '',
-    password: 'password123',
-    admissionNo: '',
-    class: 'Class 10th',
-    rollNo: '',
-    fatherName: '',
-    motherName: '',
-    phone: '',
-    gender: 'Male',
-    dateOfBirth: '',
-    joiningDate: '',
-    category: 'General' as 'General' | 'OBC' | 'SC' | 'ST',
-    aadharNo: '',
-    samagraId: '',
-    apaarId: '',
-    panNo: '',
-    usesTransport: 'No' as 'Yes' | 'No',
-    address: {
-      village: '',
-      postOffice: '',
-      tehsil: '',
-      district: '',
-      state: '',
-      pincode: ''
-    },
-    bankDetails: {
-      accountHolderName: '',
-      bankName: '',
-      accountNumber: '',
-      ifscCode: '',
-      branchName: ''
-    }
-  });
+  const [studentForm, setStudentForm] = useState(createDefaultStudentForm());
+  const previousCalendarMonthRef = useRef(currentCalendarMonth);
   
   const [teacherForm, setTeacherForm] = useState({
     name: '',
@@ -410,7 +472,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const loadDashboardData = async () => {
       setLoading(true);
       try {
-        const [statsRes, noticeRes, activityRes, feeRes, distRes, studentsFullRes, teachersRes, feeStructuresRes, feeLedgerRes] = await Promise.all([
+        const [statsRes, noticeRes, activityRes, feeRes, distRes, studentsFullRes, teachersRes, feeStructuresRes, academicYearsRes] = await Promise.all([
           dashboardApi.getStats(),
           noticeApi.getRecentNotices(),
           dashboardApi.getActivities(),
@@ -419,7 +481,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           studentApi.getStudents({ limit: 1000 }), // Retrieve up to 1000 students for complete general school statistics and ledgers
           teacherApi.getTeachers(),
           feeStructureApi.getFeeStructures(),
-          feeApi.getFeeLedger({ limit: 1000 })
+          studentApi.getAcademicYears()
         ]);
 
         const studentsFullList = studentsFullRes && 'students' in studentsFullRes ? studentsFullRes.students : (Array.isArray(studentsFullRes) ? studentsFullRes : []);
@@ -432,34 +494,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setAllStudents(studentsFullList);
         setTeachers(teachersRes);
         setFeeStructures(feeStructuresRes);
-
-        // Dynamically compute fee records based on fetched live students list
-        const mappedFeeRecords = (feeLedgerRes.students || []).map((s: any) => ({
-          id: s.studentId,
-          name: s.name,
-          className: s.class || s.className || 'General',
-          academicYear: s.academicYear || '',
-          dueAmount: s.dueAmount != null ? s.dueAmount : 0,
-          totalFee: s.totalFee != null ? s.totalFee : 0,
-          paidAmount: s.paidAmount != null ? s.paidAmount : 0,
-          status: s.status === 'Unpaid' ? 'Pending' : (s.status === 'Paid' ? 'Paid' : (s.status || 'Pending')),
-          admissionNo: s.admissionNo || '',
-          category: s.category || 'General',
-          village: s.address?.village || '',
-          paymentHistory: Array.isArray(s.paymentHistory) ? s.paymentHistory.map((ph: any) => ({
-            date: ph.date || '',
-            amount: ph.amount != null ? ph.amount : 0,
-            receiptNo: ph.receiptNo || '',
-            academicYear: ph.academicYear || ''
-          })) : []
-        }));
-        setFeeRecords(mappedFeeRecords);
-        if (selectedFeeStudent) {
-          const freshRecord = mappedFeeRecords.find((item: any) => item.id === selectedFeeStudent.id);
-          if (freshRecord) {
-            setSelectedFeeStudent(freshRecord);
-          }
-        }
+        setAcademicYears(academicYearsRes);
       } catch (err) {
         console.error('Error synchronizing school logs:', err);
       } finally {
@@ -470,6 +505,119 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     loadDashboardData();
   }, [refreshTrigger]);
 
+  useEffect(() => {
+    const loadFeeLedger = async () => {
+      try {
+        const feeLedgerParams: {
+          limit: number;
+          status: string;
+          academicYear?: string;
+        } = {
+          limit: 1000,
+          status: feeStatusFilter
+        };
+
+        if (academicYears.length > 0 && feeAcademicYearFilter) {
+          feeLedgerParams.academicYear = feeAcademicYearFilter;
+        }
+
+        const feeLedgerRes = await feeApi.getFeeLedger(feeLedgerParams);
+
+        const mappedFeeRecords = mapFeeLedgerRecords(feeLedgerRes.students || []);
+        setFeeRecords(mappedFeeRecords);
+        setSelectedFeeStudent((current) => {
+          if (!mappedFeeRecords.length) {
+            return null;
+          }
+
+          if (current) {
+            return mappedFeeRecords.find((item) => item.id === current.id) || mappedFeeRecords[0];
+          }
+
+          return mappedFeeRecords[0];
+        });
+      } catch (err) {
+        console.error('Error loading fee ledger:', err);
+        setFeeRecords([]);
+        setSelectedFeeStudent(null);
+      }
+    };
+
+    loadFeeLedger();
+  }, [academicYears.length, feeStatusFilter, feeAcademicYearFilter, refreshTrigger, mapFeeLedgerRecords]);
+
+  useEffect(() => {
+    if (!academicYears.length) {
+      return;
+    }
+
+    if (!studentAcademicYearFilter || !academicYears.some((year) => year.label === studentAcademicYearFilter)) {
+      const currentYear = academicYears.find((year) => year.isCurrent)?.label || academicYears[0]?.label || '';
+      setStudentAcademicYearFilter(currentYear);
+    }
+  }, [academicYears, studentAcademicYearFilter]);
+
+  useEffect(() => {
+    if (!academicYears.length) {
+      return;
+    }
+
+    const preferredAcademicYear =
+      academicYears.find((year) => year.isCurrent)?.label ||
+      academicYears[0]?.label ||
+      '';
+
+    setFeeAcademicYearFilter((current) =>
+      current && academicYears.some((year) => year.label === current)
+        ? current
+        : preferredAcademicYear
+    );
+    setHistoryYear((current) =>
+      current && academicYears.some((year) => year.label === current)
+        ? current
+        : preferredAcademicYear
+    );
+    setFeeStructureForm((current) => (
+      current.academicSession && academicYears.some((year) => year.label === current.academicSession)
+        ? current
+        : { ...current, academicSession: preferredAcademicYear }
+    ));
+    setFeeStructureYearFilter((current) => {
+      if (current && academicYears.some((year) => year.label === current)) {
+        return current;
+      }
+      return preferredAcademicYear;
+    });
+  }, [academicYears]);
+
+  useEffect(() => {
+    const syncCalendarFilters = () => {
+      const nextMonth = getCurrentCalendarMonth();
+      const nextYear = getCurrentCalendarYear();
+      const previousMonth = previousCalendarMonthRef.current;
+
+      setCurrentCalendarMonth(nextMonth);
+      setCurrentCalendarYear(nextYear);
+
+      setHistoryMonth((current) => (current === previousMonth ? nextMonth : current));
+      previousCalendarMonthRef.current = nextMonth;
+    };
+
+    const now = new Date();
+    const nextMidnight = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate() + 1,
+      0,
+      0,
+      1,
+      0
+    );
+    const timeout = window.setTimeout(syncCalendarFilters, nextMidnight.getTime() - now.getTime());
+
+    return () => window.clearTimeout(timeout);
+  }, [currentCalendarMonth, currentCalendarYear]);
+
   // --- FETCH FEE HISTORY & REPORTING ---
   useEffect(() => {
     const fetchFeeHistory = async () => {
@@ -478,7 +626,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         if (historyMonth !== 'All') {
           params.month = historyMonth;
         }
-        if (historyYear !== 'All') {
+        if (historyYear && historyYear !== 'All') {
           params.academicYear = historyYear;
         }
         if (historyPaymentMethod !== 'All') {
@@ -486,6 +634,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         }
         if (historyClassFilter !== 'All') {
           params.className = historyClassFilter;
+        }
+        if (historyStatusFilter !== 'All') {
+          params.status = historyStatusFilter;
+        }
+        if (historyAcademicYearFilter !== 'All') {
+          params.academicYear = historyAcademicYearFilter;
         }
 
         const data = await feeApi.getFeeHistory(params);
@@ -498,7 +652,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
 
     fetchFeeHistory();
-  }, [historyClassFilter, historyMonth, historyYear, historyPaymentMethod, refreshTrigger]);
+  }, [historyClassFilter, historyMonth, historyYear, historyPaymentMethod, historyStatusFilter, historyAcademicYearFilter, refreshTrigger]);
 
   useEffect(() => {
     const fetchStudentFinancialHistory = async () => {
@@ -544,6 +698,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         category: categoryFilter,
         village: villageFilter,
         class: studentClassFilter,
+        section: studentSectionFilter,
+        academicYear: studentAcademicYearFilter,
         sortBy,
         order,
         search: studentSearchQuery.trim()
@@ -564,33 +720,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     } catch (err) {
       console.error('Error loading paginated students:', err);
     }
-  }, [page, limit, categoryFilter, villageFilter, studentClassFilter, sortBy, order, studentSearchQuery]);
+  }, [page, limit, categoryFilter, villageFilter, studentClassFilter, studentSectionFilter, studentAcademicYearFilter, sortBy, order, studentSearchQuery]);
 
   useEffect(() => {
     loadStudents();
   }, [loadStudents, refreshTrigger]);
 
   useEffect(() => {
+    const handleAcademicYearUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ message?: string }>;
+      setAcademicYearSuccessMessage(customEvent.detail?.message || 'Academic year updated');
+      triggerDataRefresh();
+    };
+
+    window.addEventListener('school:academic-year-updated', handleAcademicYearUpdated as EventListener);
+    return () => {
+      window.removeEventListener('school:academic-year-updated', handleAcademicYearUpdated as EventListener);
+    };
+  }, []);
+
+  useEffect(() => {
     setPage(1);
-  }, [studentSearchQuery, categoryFilter, villageFilter, studentClassFilter]);
+  }, [studentSearchQuery, categoryFilter, villageFilter, studentClassFilter, studentSectionFilter, studentAcademicYearFilter]);
 
   const triggerDataRefresh = () => {
     setRefreshTrigger(prev => prev + 1);
   };
 
   const promotionAcademicYears = useMemo(() => {
-    const sessions = feeStructures
-      .map((feeStructure) => feeStructure.academicYear || feeStructure.academicSession)
-      .filter(Boolean);
-
-    const currentYear = new Date().getFullYear();
-    const fallback = [
-      `${currentYear}-${String(currentYear + 1).slice(-2)}`,
-      `${currentYear + 1}-${String(currentYear + 2).slice(-2)}`
-    ];
-
-    return Array.from(new Set([...fallback, ...sessions]));
-  }, [feeStructures]);
+    return [...academicYearLabels].sort(sortAcademicYearsDesc);
+  }, [academicYearLabels]);
 
   const activeFinancialEntry = useMemo(() => {
     if (selectedFinancialYear) {
@@ -613,6 +772,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       status: activeFinancialEntry?.status || selectedFeeStudent.status
     };
   }, [activeFinancialEntry, selectedFeeStudent]);
+
+  const visibleFeeRecords = useMemo(() => {
+    const searchTerm = feeSearchQuery.trim().toLowerCase();
+
+    return feeRecords.filter((record) => {
+      const matchesSearch =
+        !searchTerm ||
+        (record.name || '').toLowerCase().includes(searchTerm) ||
+        (record.admissionNo || '').toLowerCase().includes(searchTerm);
+
+      const matchesClass =
+        feeClassFilter === 'All' ||
+        (() => {
+          const classParts = (record.className || '').split('-');
+          const recordBase = classParts[0].trim().toLowerCase();
+          const filterLower = feeClassFilter.trim().toLowerCase();
+
+          const isNurseryMatch = filterLower === 'nursery' && recordBase === 'nursery';
+          const isJKGMatch = filterLower === 'jkg' && (recordBase === 'jkg' || recordBase === 'lkg');
+          const isSKGMatch = filterLower === 'skg' && (recordBase === 'skg' || recordBase === 'ukg');
+
+          const getNumericValue = (str: string) => str.replace(/(st|nd|rd|th)/g, '');
+          const filterNumeric = getNumericValue(filterLower);
+          const recordNumeric = getNumericValue(recordBase);
+
+          const isNumericMatch = !!(
+            filterNumeric &&
+            recordNumeric &&
+            (filterNumeric === recordNumeric || filterLower.startsWith(recordBase) || recordBase.startsWith(filterLower))
+          );
+
+          return (
+            isNurseryMatch ||
+            isJKGMatch ||
+            isSKGMatch ||
+            isNumericMatch ||
+            recordBase === filterLower ||
+            (record.className || '').toLowerCase().includes(filterLower)
+          );
+        })();
+
+      const matchesStatus = feeStatusFilter === 'All' || record.status === feeStatusFilter;
+      const matchesAcademicYear =
+        feeAcademicYearFilter === 'All' || (record.academicYear || '') === feeAcademicYearFilter;
+
+      return matchesSearch && matchesClass && matchesStatus && matchesAcademicYear;
+    });
+  }, [feeAcademicYearFilter, feeClassFilter, feeRecords, feeSearchQuery, feeStatusFilter]);
 
   const studentFinancialTimeline = useMemo(
     () =>
@@ -645,9 +852,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     triggerDataRefresh();
   };
 
+  const openStudentFormErrorModal = (title: string, errors: Record<string, string>) => {
+    const messages = Object.entries(errors)
+      .filter(([, value]) => Boolean(value))
+      .map(([field, value]) => {
+        const label = field === 'submit'
+          ? 'Submission'
+          : field
+              .replace(/([A-Z])/g, ' $1')
+              .replace(/^./, (char) => char.toUpperCase())
+              .replace(/_/g, ' ');
+        return `${label}: ${value}`;
+      });
+
+    setStudentFormErrorTitle(title);
+    setStudentFormErrorMessages(messages.length ? messages : [title]);
+    setIsStudentFormErrorModalOpen(true);
+  };
+
+  const openAddStudentModal = () => {
+    setEditingStudentId(null);
+    setEditingStudentOriginalUsesTransport(null);
+    setStudentForm({
+      ...createDefaultStudentForm(),
+      academicYear: preferredAcademicYearLabel
+    });
+    setFormErrors({});
+    setStudentFormErrorMessages([]);
+    setStudentFormErrorTitle('');
+    setIsStudentFormErrorModalOpen(false);
+    setIsStudentModalOpen(true);
+  };
+
+  const closeStudentModal = () => {
+    setIsStudentModalOpen(false);
+    setEditingStudentId(null);
+    setEditingStudentOriginalUsesTransport(null);
+    setFormErrors({});
+    setIsStudentFormErrorModalOpen(false);
+    setStudentFormErrorMessages([]);
+    setStudentFormErrorTitle('');
+  };
+
   const handleDashboardCollectTermFee = () => {
     setCurrentTab('fees');
-    const activeRecord = selectedFeeStudent || feeRecords[0];
+    const activeRecord =
+      (selectedFeeStudent && visibleFeeRecords.some((record) => record.id === selectedFeeStudent.id)
+        ? selectedFeeStudent
+        : visibleFeeRecords[0] || selectedFeeStudent || feeRecords[0]) || null;
     if (activeRecord) {
       setSelectedFeeStudent(activeRecord);
       setSelectedFinancialYear(activeFinancialEntry?.academicYear || activeRecord.academicYear || '');
@@ -662,12 +914,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // --- FORM SUBMISSIONS & EDIT / DELETE TRIGGER HANDLERS ---
   const handleEditStudentClick = (stu: Student) => {
     setEditingStudentId(stu.id);
+    setEditingStudentOriginalUsesTransport(Boolean(stu.usesTransport));
     setStudentForm({
+      ...createDefaultStudentForm(),
       name: stu.name,
-      email: stu.email,
+      email: stu.email || 'student@gmail.com',
       password: 'password123',
       admissionNo: stu.admissionNo || stu.rollNumber || '',
-      class: stu.class || 'Class 10th',
+      class: stu.class || '',
+      academicYear: stu.academicYear || preferredAcademicYearLabel,
       rollNo: String(stu.rollNo || ''),
       fatherName: stu.fatherName || stu.parentName || '',
       motherName: stu.motherName || '',
@@ -697,6 +952,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         branchName: stu.bankDetails?.branchName || ''
       }
     });
+    setFormErrors({});
     setIsStudentModalOpen(true);
   };
 
@@ -768,6 +1024,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     if (!studentForm.name) {
       errors.name = 'Student name is required';
     }
+    if (!studentForm.email) {
+      errors.email = 'Login email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studentForm.email.trim())) {
+      errors.email = 'Enter a valid email address';
+    }
+    if (!studentForm.password) {
+      errors.password = 'Password is required';
+    }
+    if (!studentForm.admissionNo) {
+      errors.admissionNo = 'Admission number is required';
+    }
+    if (!studentForm.class) {
+      errors.class = 'Please select a class';
+    }
+    if (!studentForm.rollNo) {
+      errors.rollNo = 'Roll number is required';
+    }
+    if (!studentForm.fatherName) {
+      errors.fatherName = 'Father name is required';
+    }
+    if (!studentForm.motherName) {
+      errors.motherName = 'Mother name is required';
+    }
 
     // Aadhaar → 12 digits
     if (studentForm.aadharNo && !/^\d{12}$/.test(studentForm.aadharNo)) {
@@ -776,7 +1055,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     // Phone → 10 digits
     const cleanPhone = studentForm.phone.replace(/[\s\-\+\(\)]/g, '');
     if (studentForm.phone && !/^\d{10}$/.test(cleanPhone)) {
-      errors.phone = 'Phone must be exactly 10 digits';
+      errors.phone = 'Enter 10 digit number';
     }
     // PAN → 10 characters (typically 5 uppercase letters, 4 digits, 1 uppercase letter)
     if (studentForm.panNo && !/^[A-Z]{5}[0-9]{4}[A-Z]{1}$/i.test(studentForm.panNo)) {
@@ -789,12 +1068,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
+      openStudentFormErrorModal(
+        'Please fix the highlighted student form errors before submitting.',
+        errors
+      );
       return;
     }
 
     setSubmitLoading(true);
     try {
       let savedStudent: any;
+      const isEditingStudent = Boolean(editingStudentId);
+      const shouldOpenTransportAssignment =
+        (!isEditingStudent && studentForm.usesTransport === 'Yes') ||
+        (isEditingStudent &&
+          editingStudentOriginalUsesTransport === false &&
+          studentForm.usesTransport === 'Yes');
+
       if (editingStudentId) {
         savedStudent = await studentApi.updateStudent(editingStudentId, studentForm as any);
         setEditingStudentId(null);
@@ -802,53 +1092,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         savedStudent = await studentApi.addStudent(studentForm as any);
       }
       setIsStudentModalOpen(false);
-      
-      const shouldAssignTransport = studentForm.usesTransport === 'Yes';
       const studentIdForTransport = savedStudent?.id || savedStudent?._id;
 
-      setStudentForm({
-        name: '',
-        email: '',
-        password: 'password123',
-        admissionNo: '',
-        class: 'Class 10th',
-        rollNo: '',
-        fatherName: '',
-        motherName: '',
-        phone: '',
-        gender: 'Male',
-        dateOfBirth: '',
-        joiningDate: '',
-        category: 'General',
-        aadharNo: '',
-        samagraId: '',
-        apaarId: '',
-        panNo: '',
-        usesTransport: 'No',
-        address: {
-          village: '',
-          postOffice: '',
-          tehsil: '',
-          district: '',
-          state: '',
-          pincode: ''
-        },
-        bankDetails: {
-          accountHolderName: '',
-          bankName: '',
-          accountNumber: '',
-          ifscCode: '',
-          branchName: ''
-        }
-      });
+      setStudentForm(createDefaultStudentForm());
+      setEditingStudentOriginalUsesTransport(null);
       triggerDataRefresh();
 
-      if (shouldAssignTransport && studentIdForTransport) {
+      if (shouldOpenTransportAssignment && studentIdForTransport) {
         setUsesTransportPresetStudentId(studentIdForTransport);
         setCurrentTab('transport');
       }
     } catch (err: any) {
-      setFormErrors({ submit: err.message || 'Admission failed' });
+      const submitError = err?.response?.data?.message || err.message || 'Admission failed';
+      const serverErrors = {
+        submit: submitError
+      };
+      setFormErrors(serverErrors);
+      openStudentFormErrorModal('Student admission failed.', serverErrors);
     } finally {
       setSubmitLoading(false);
     }
@@ -951,7 +1211,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       computerFee: '',
       examFee: '',
       culturalActivityFee: '',
-      academicSession: CURRENT_ACADEMIC_SESSION,
+      academicSession: preferredAcademicYearLabel,
       juneAmount: '',
       septemberAmount: '',
       decemberAmount: '',
@@ -969,7 +1229,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       computerFee: String(fs.computerFee || ''),
       examFee: String(fs.examFee || ''),
       culturalActivityFee: String(fs.culturalActivityFee || ''),
-      academicSession: fs.academicYear || fs.academicSession || CURRENT_ACADEMIC_SESSION,
+      academicSession: fs.academicYear || fs.academicSession || '',
       juneAmount: String(fs.juneAmount || ''),
       septemberAmount: String(fs.septemberAmount || ''),
       decemberAmount: String(fs.decemberAmount || ''),
@@ -1653,17 +1913,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleExportFeesExcel = () => {
-    const headers = ['ID', 'Student Name', 'Admission No', 'Class Name', 'Total Billable Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
-    const keys = ['id', 'name', 'admissionNo', 'className', 'totalFee', 'paidAmount', 'dueAmount', 'status'];
-    exportToExcel(feeRecords, headers, keys, `Fees_Ledger_${new Date().toISOString().split('T')[0]}`);
+    const headers = ['ID', 'Student Name', 'Admission No', 'Class Name', 'Academic Year', 'Total Billable Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
+    const keys = ['id', 'name', 'admissionNo', 'className', 'academicYear', 'totalFee', 'paidAmount', 'dueAmount', 'status'];
+    exportToExcel(visibleFeeRecords, headers, keys, `Fees_Ledger_${new Date().toISOString().split('T')[0]}`);
   };
 
   const handleExportFeesPDF = () => {
-    const headers = ['Student Name', 'Admission No', 'Class', 'Total Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
-    const rows = feeRecords.map(item => [
+    const headers = ['Student Name', 'Admission No', 'Class', 'Academic Year', 'Total Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
+    const rows = visibleFeeRecords.map(item => [
       item.name || '',
       item.admissionNo || '',
       item.className || '',
+      item.academicYear || '',
       `₹${(item.totalFee ?? 0).toLocaleString()}`,
       `₹${(item.paidAmount ?? 0).toLocaleString()}`,
       `₹${(item.dueAmount ?? 0).toLocaleString()}`,
@@ -1824,17 +2085,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const filteredFeeStructures = (Array.isArray(feeStructures) ? feeStructures : []).filter(fs => {
     const matchesSearch = !feeStructureSearchQuery || (fs.class || '').toLowerCase().includes(feeStructureSearchQuery.toLowerCase());
-    const matchesYear = feeStructureYearFilter === 'All' || (fs.academicYear || fs.academicSession) === feeStructureYearFilter;
+    const matchesYear = activeFeeStructureYearFilter === 'All' || (fs.academicYear || fs.academicSession) === activeFeeStructureYearFilter;
     return matchesSearch && matchesYear;
   });
 
-  const academicSessionOptions = Array.from(
-    new Set([
-      CURRENT_ACADEMIC_SESSION,
-      PREVIOUS_ACADEMIC_SESSION,
-      ...(Array.isArray(feeStructures) ? feeStructures : []).map(fs => fs.academicYear || fs.academicSession)
-    ])
-  ).filter(Boolean);
+  const academicSessionOptions = useMemo(() => {
+    const labels = new Set<string>(academicYearLabels);
+
+    (Array.isArray(feeStructures) ? feeStructures : []).forEach((fs) => {
+      const label = String(fs.academicYear || fs.academicSession || '').trim();
+      if (label) {
+        labels.add(label);
+      }
+    });
+
+    return Array.from(labels).sort(sortAcademicYearsDesc);
+  }, [academicYearLabels, feeStructures]);
+
+  const historyYearOptions = useMemo(() => {
+    const labels = new Set<string>(academicYearLabels);
+
+    feeHistory.forEach((entry) => {
+      const label = String(entry?.academicYear || '').trim();
+      if (label) {
+        labels.add(label);
+      }
+    });
+
+    return Array.from(labels).sort(sortAcademicYearsDesc);
+  }, [academicYearLabels, feeHistory]);
 
   // Render Skeleton while initial loading is active
   if (loading && !stats) {
@@ -1889,7 +2168,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <Button variant="secondary" onClick={() => setIsPromotionModalOpen(true)} leftIcon={<ArrowRight size={16} />}>
               Promote Students
             </Button>
-            <Button onClick={() => setIsStudentModalOpen(true)} leftIcon={<Plus size={16} />}>
+            <Button onClick={openAddStudentModal} leftIcon={<Plus size={16} />}>
               Admit Student
             </Button>
           </div>
@@ -1957,7 +2236,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 description="Formulate standard registry records, profile parameters & group levels."
                 actionText="Admit New Student"
                 icon={UserPlus}
-                onClick={() => setIsStudentModalOpen(true)}
+                onClick={openAddStudentModal}
                 accentBgClass="bg-blue-50/70 border border-blue-100/50 text-blue-600 group-hover:bg-blue-600 group-hover:text-white"
                 accentTextClass="text-blue-600"
               />
@@ -2024,6 +2303,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               {promotionSuccessMessage}
             </div>
           )}
+          {academicYearSuccessMessage && (
+            <div className="mb-4 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-800 text-sm font-semibold">
+              {academicYearSuccessMessage}
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-4 border-b border-slate-100 mb-4">
             <div className="flex flex-wrap items-center gap-3 w-full lg:max-w-4xl">
               <div className="relative w-full sm:max-w-xs">
@@ -2037,6 +2321,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 />
               </div>
               <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Academic Year:</span>
+                  <select
+                    value={studentAcademicYearFilter}
+                    onChange={(e) => setStudentAcademicYearFilter(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[130px]"
+                  >
+                    <option value="All">All Sessions</option>
+                    {academicYears.map((year) => (
+                      <option key={year.id} value={year.label}>
+                        {year.label}{year.isCurrent ? ' (Current)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Class:</span>
                   <select
@@ -2058,6 +2358,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <option value="8th">8th</option>
                     <option value="9th">9th</option>
                     <option value="10th">10th</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Section:</span>
+                  <select
+                    value={studentSectionFilter}
+                    onChange={(e) => setStudentSectionFilter(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[100px]"
+                  >
+                    <option value="All">All Sections</option>
+                    {studentSectionOptions.map((section) => (
+                      <option key={section} value={section}>{section}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -2343,41 +2657,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
       {/* --- FINANCIAL TABS VIEW --- */}
       {currentTab === 'fees' && (() => {
-        const activeRecord = selectedFeeStudent || feeRecords[0];
+        const activeRecord =
+          (selectedFeeStudent && visibleFeeRecords.some((record) => record.id === selectedFeeStudent.id)
+            ? selectedFeeStudent
+            : visibleFeeRecords[0] || selectedFeeStudent || feeRecords[0]) || null;
 
-        // Match student's class to fee structure or build dynamic fallback based on totalFee
-        const getMatchingStructureForClass = (studentClass: string, totalFee: number) => {
+        // Resolve a fee structure only within the selected academic year.
+        const getMatchingStructureForClass = (studentClass: string, academicYear: string) => {
           const cleanedClass = (studentClass || '').trim().toLowerCase();
-          let match = (feeStructures || []).find(fs => (fs.class || '').toLowerCase() === cleanedClass);
+          const cleanedYear = (academicYear || '').trim();
+          if (!cleanedClass || !cleanedYear) {
+            return null;
+          }
+
+          const yearStructures = (feeStructures || []).filter(
+            (fs) => (fs.academicYear || fs.academicSession || '').trim() === cleanedYear
+          );
+
+          let match = yearStructures.find((fs) => (fs.class || '').toLowerCase() === cleanedClass);
           if (match) return match;
+
           const numPart = cleanedClass.match(/\d+/);
           if (numPart) {
-            match = (feeStructures || []).find(fs => (fs.class || '').toLowerCase().includes(numPart[0]));
+            match = yearStructures.find((fs) => (fs.class || '').toLowerCase().includes(numPart[0]));
             if (match) return match;
           }
-          match = (feeStructures || []).find(fs => 
-            (fs.class || '').toLowerCase().includes(cleanedClass) || 
-            cleanedClass.includes((fs.class || '').toLowerCase())
-          );
-          if (match) return match;
 
-          // Default fallback split into 4 quarters
-          const parts = Math.floor(totalFee / 4);
-          return {
-            id: `fallback-fs-${cleanedClass}`,
-            class: studentClass || 'General',
-            admissionFee: 0,
-            tuitionFee: totalFee,
-            computerFee: 0,
-            examFee: 0,
-            culturalActivityFee: 0,
-            totalFee: totalFee,
-            academicSession: CURRENT_ACADEMIC_SESSION,
-            juneAmount: parts,
-            septemberAmount: parts,
-            decemberAmount: parts,
-            marchAmount: totalFee - parts * 3
-          };
+          return yearStructures.find(
+            (fs) =>
+              (fs.class || '').toLowerCase().includes(cleanedClass) ||
+              cleanedClass.includes((fs.class || '').toLowerCase())
+          ) || null;
         };
 
         // Determine installment statuses based on recorded cumulative paidAmount
@@ -2416,36 +2726,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           };
         };
         
-        // Filter student fees list
-        const filteredFeeRecords = feeRecords.filter(record => {
-          const matchesSearch = record.name.toLowerCase().includes(feeSearchQuery.toLowerCase()) || 
-                                record.admissionNo.toLowerCase().includes(feeSearchQuery.toLowerCase());
-          
-          let matchesClass = false;
-          if (feeClassFilter === 'All') {
-            matchesClass = true;
-          } else {
-            const classParts = record.className.split('-');
-            const recordBase = classParts[0].trim().toLowerCase();
-            const filterLower = feeClassFilter.trim().toLowerCase();
-
-            // Match equivalence patterns
-            const isNurseryMatch = filterLower === 'nursery' && recordBase === 'nursery';
-            const isJKGMatch = filterLower === 'jkg' && (recordBase === 'jkg' || recordBase === 'lkg');
-            const isSKGMatch = filterLower === 'skg' && (recordBase === 'skg' || recordBase === 'ukg');
-
-            const getNumericValue = (str: string) => str.replace(/(st|nd|rd|th)/g, '');
-            const filterNumeric = getNumericValue(filterLower);
-            const recordNumeric = getNumericValue(recordBase);
-
-            const isNumericMatch = !!(filterNumeric && recordNumeric && (filterNumeric === recordNumeric || filterLower.startsWith(recordBase) || recordBase.startsWith(filterLower)));
-
-            matchesClass = isNurseryMatch || isJKGMatch || isSKGMatch || isNumericMatch || recordBase === filterLower || record.className.toLowerCase().includes(filterLower);
-          }
-
-          return matchesSearch && matchesClass;
-        });
-
         // Trigger action to open payment dialog
         const handleOpenPayModal = (record: typeof feeRecords[0], financialYearRecord?: FinancialHistoryEntry | null) => {
           setSelectedFeeStudent(record);
@@ -2601,6 +2881,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </select>
                 </div>
 
+                <div className="relative w-full sm:w-44">
+                  <select
+                    value={feeStatusFilter}
+                    onChange={(e) => setFeeStatusFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer focus:bg-white focus:border-blue-500 text-slate-700"
+                  >
+                    <option value="All">Status: All</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Partial">Partial</option>
+                    <option value="Pending">Pending</option>
+                  </select>
+                </div>
+
+                <div className="relative w-full sm:w-52">
+                  <select
+                    value={feeAcademicYearFilter}
+                    onChange={(e) => setFeeAcademicYearFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer focus:bg-white focus:border-blue-500 text-slate-700"
+                  >
+                    {feeAcademicYearOptions.map((year) => (
+                      <option key={year} value={year}>
+                        Session: {year}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <button
                   onClick={handleExportFeesExcel}
                   title="Export fees ledger block to Excel (.csv)"
@@ -2640,14 +2947,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50 font-bold">
-                      {filteredFeeRecords.length === 0 ? (
+                      {visibleFeeRecords.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="text-center py-10 text-slate-400 text-xs font-semibold">
                             No ledger matches found in directories.
                           </td>
                         </tr>
                       ) : (
-                        filteredFeeRecords.map((item) => {
+                        visibleFeeRecords.map((item) => {
                           const isActive = activeRecord?.id === item.id;
                           return (
                             <tr 
@@ -2760,8 +3067,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           const dueAmount = selectedYearEntry?.dueAmount ?? activeRecord.dueAmount ?? 0;
                           const status = selectedYearEntry?.status || activeRecord.status;
                           const className = selectedYearEntry?.className || activeRecord.className;
-                          const matchingFS = getMatchingStructureForClass(className, totalFee);
-                          const inst = getInstallmentStatuses(paidAmount, matchingFS);
+                          const matchingFS = getMatchingStructureForClass(className, selectedYearEntry?.academicYear || '');
+                          const inst = matchingFS ? getInstallmentStatuses(paidAmount, matchingFS) : {
+                            junePaid: 0,
+                            septemberPaid: 0,
+                            decemberPaid: 0,
+                            marchPaid: 0,
+                            juneStatus: 'Pending',
+                            septemberStatus: 'Pending',
+                            decemberStatus: 'Pending',
+                            marchStatus: 'Pending'
+                          };
 
                           return (
                             <div className="space-y-5">
@@ -2793,6 +3109,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Installment Plan</h4>
                                   <span className="text-[10px] font-bold text-slate-400">June / September / December / March</span>
                                 </div>
+                                {!matchingFS && (
+                                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-700">
+                                    No fee structure is configured for this academic year.
+                                  </div>
+                                )}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                   {[
                                     ['June', matchingFS?.juneAmount || 0, inst.junePaid],
@@ -2927,7 +3248,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
 
               {/* Advanced Multi-Filter Form */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
                 
                 {/* 1. Month Filter */}
                 <div className="flex flex-col gap-1.5">
@@ -2962,7 +3283,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
                   >
                     <option value="All">All Years</option>
-                    {HISTORY_YEAR_OPTIONS.map((year) => (
+                    {historyYearOptions.map((year) => (
                       <option key={year} value={year}>{year}</option>
                     ))}
                   </select>
@@ -2983,7 +3304,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </select>
                 </div>
 
-                {/* 4. Class Selector */}
+                {/* 4. Status Filter */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Status</label>
+                  <select
+                    value={historyStatusFilter}
+                    onChange={(e) => setHistoryStatusFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
+                  >
+                    <option value="All">All Status</option>
+                    <option value="Paid">Paid</option>
+                    <option value="Partial">Partial</option>
+                    <option value="Pending">Pending</option>
+                  </select>
+                </div>
+
+                {/* 5. Academic Year (Session) Filter */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Session</label>
+                  <select
+                    value={historyAcademicYearFilter}
+                    onChange={(e) => setHistoryAcademicYearFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2 bg-white border border-slate-200 rounded-lg outline-none cursor-pointer focus:border-blue-500 text-slate-700 shadow-sm"
+                  >
+                    <option value="All">All Sessions</option>
+                    {academicYears.map((year) => (
+                      <option key={year.id} value={year.label}>
+                        {year.label}{year.isCurrent ? ' (Current)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* 6. Class Selector */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">Class Selector</label>
                   <select
@@ -3171,8 +3524,17 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                         </div>
 
                         {(() => {
-                          const matchingFS = getMatchingStructureForClass(selectedClassName, totalFee);
-                          const inst = getInstallmentStatuses(paidAmount, matchingFS);
+                          const matchingFS = getMatchingStructureForClass(selectedClassName, paymentYear);
+                          const inst = matchingFS ? getInstallmentStatuses(paidAmount, matchingFS) : {
+                            junePaid: 0,
+                            septemberPaid: 0,
+                            decemberPaid: 0,
+                            marchPaid: 0,
+                            juneStatus: 'Pending',
+                            septemberStatus: 'Pending',
+                            decemberStatus: 'Pending',
+                            marchStatus: 'Pending'
+                          };
 
                           const juneRemaining = Math.max(0, (matchingFS?.juneAmount || 0) - inst.junePaid);
                           const septemberRemaining = Math.max(0, (matchingFS?.septemberAmount || 0) - inst.septemberPaid);
@@ -3185,6 +3547,11 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                           return (
                             <div className="space-y-1.5 p-3 bg-slate-50 border border-slate-100 rounded-xl">
                               <label className="text-[9px] font-black tracking-wider text-slate-400 uppercase">Installment Quick Select</label>
+                              {!matchingFS && (
+                                <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-[10px] font-semibold text-amber-700">
+                                  No fee structure is configured for this academic year.
+                                </div>
+                              )}
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                 {juneRemaining > 0 && (
                                   <button
@@ -3499,14 +3866,12 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Session:</span>
                     <select
-                      value={feeStructureYearFilter}
+                      value={activeFeeStructureYearFilter}
                       onChange={(e) => setFeeStructureYearFilter(e.target.value)}
                       className="px-3 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[110px]"
                     >
-                      <option value="All">All Years</option>
-                      <option value={CURRENT_ACADEMIC_SESSION}>{CURRENT_ACADEMIC_SESSION}</option>
-                      <option value={PREVIOUS_ACADEMIC_SESSION}>{PREVIOUS_ACADEMIC_SESSION}</option>
-                      {academicSessionOptions.filter(y => y !== CURRENT_ACADEMIC_SESSION && y !== PREVIOUS_ACADEMIC_SESSION).map(y => (
+                      <option value="All">All Sessions</option>
+                      {academicSessionOptions.map((y) => (
                         <option key={y} value={y}>{y}</option>
                       ))}
                     </select>
@@ -3674,9 +4039,6 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                             </div>
                             <div className="flex items-center gap-2 font-mono">
                               <span className="text-xs font-black text-slate-900">₹{(displayStructure.juneAmount || 0).toLocaleString()}</span>
-                              <Badge variant={displayStructure.juneStatus === 'Paid' ? 'success' : 'warning'} size="sm">
-                                {displayStructure.juneStatus || 'Pending'}
-                              </Badge>
                             </div>
                           </div>
 
@@ -3687,9 +4049,6 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                             </div>
                             <div className="flex items-center gap-2 font-mono">
                               <span className="text-xs font-black text-slate-900">₹{(displayStructure.septemberAmount || 0).toLocaleString()}</span>
-                              <Badge variant={displayStructure.septemberStatus === 'Paid' ? 'success' : 'warning'} size="sm">
-                                {displayStructure.septemberStatus || 'Pending'}
-                              </Badge>
                             </div>
                           </div>
 
@@ -3700,9 +4059,6 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                             </div>
                             <div className="flex items-center gap-2 font-mono">
                               <span className="text-xs font-black text-slate-900">₹{(displayStructure.decemberAmount || 0).toLocaleString()}</span>
-                              <Badge variant={displayStructure.decemberStatus === 'Paid' ? 'success' : 'warning'} size="sm">
-                                {displayStructure.decemberStatus || 'Pending'}
-                              </Badge>
                             </div>
                           </div>
 
@@ -3713,9 +4069,6 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                             </div>
                             <div className="flex items-center gap-2 font-mono">
                               <span className="text-xs font-black text-slate-900">₹{(displayStructure.marchAmount || 0).toLocaleString()}</span>
-                              <Badge variant={displayStructure.marchStatus === 'Paid' ? 'success' : 'warning'} size="sm">
-                                {displayStructure.marchStatus || 'Pending'}
-                              </Badge>
                             </div>
                           </div>
                         </div>
@@ -4071,11 +4424,11 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
       {/* 1. ADMIT STUDENT MODAL */}
       <Modal
         isOpen={isStudentModalOpen}
-        onClose={() => { setIsStudentModalOpen(false); setEditingStudentId(null); }}
+        onClose={closeStudentModal}
         title={editingStudentId ? 'Edit Student Registry Details' : 'Admit New Student Registry'}
         footer={
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setIsStudentModalOpen(false); setEditingStudentId(null); }}>
+            <Button variant="outline" size="sm" onClick={closeStudentModal}>
               Cancel
             </Button>
             <Button size="sm" type="submit" form="student-admit-form" isLoading={submitLoading}>
@@ -4136,6 +4489,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 placeholder="Enter Admission No."
                 value={studentForm.admissionNo}
                 onChange={(e) => setStudentForm({ ...studentForm, admissionNo: e.target.value })}
+                error={formErrors.admissionNo}
                 required
               />
               <div className="w-full flex flex-col gap-1.5">
@@ -4144,11 +4498,12 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 </label>
                 <div className="relative flex items-center w-full">
                   <select
-                    className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer"
+                    className={`w-full px-3.5 py-2 text-sm text-slate-900 bg-white border rounded-lg transition-all duration-200 outline-none cursor-pointer focus:ring-4 focus:ring-blue-500/10 ${formErrors.class ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : 'border-slate-200 hover:border-slate-300 focus:border-blue-500'}`}
                     value={studentForm.class}
                     onChange={(e) => setStudentForm({ ...studentForm, class: e.target.value })}
                     required
                   >
+                    <option value="" disabled>Select Class</option>
                     <option value="Nursery">Nursery</option>
                     <option value="LKG">LKG</option>
                     <option value="UKG">UKG</option>
@@ -4164,6 +4519,37 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                     <option value="Class 10th">Class 10th</option>
                   </select>
                 </div>
+                {formErrors.class && (
+                  <span className="text-xs text-red-500 font-medium flex items-center gap-1">
+                    {formErrors.class}
+                  </span>
+                )}
+              </div>
+              <div className="w-full flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-700 tracking-wide select-none">
+                  ACADEMIC YEAR / SESSION
+                </label>
+                <select
+                  className={`w-full px-3.5 py-2 text-sm text-slate-900 bg-white border rounded-lg transition-all duration-200 outline-none cursor-pointer focus:ring-4 focus:ring-blue-500/10 ${formErrors.academicYear ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : 'border-slate-200 hover:border-slate-300 focus:border-blue-500'}`}
+                  value={studentForm.academicYear}
+                  onChange={(e) => setStudentForm({ ...studentForm, academicYear: e.target.value })}
+                  required={academicYearLabels.length > 0}
+                  disabled={academicYearLabels.length === 0}
+                >
+                  <option value="" disabled>
+                    {academicYearLabels.length > 0 ? 'Select Session' : 'Create a session first'}
+                  </option>
+                  {academicYearLabels.map((year) => (
+                    <option key={year} value={year}>
+                      {year}{academicYears.find((entry) => entry.label === year)?.isCurrent ? ' (Current)' : ''}
+                    </option>
+                  ))}
+                </select>
+                {formErrors.academicYear && (
+                  <span className="text-xs text-red-500 font-medium flex items-center gap-1">
+                    {formErrors.academicYear}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -4174,6 +4560,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 placeholder="Enter Roll No."
                 value={studentForm.rollNo}
                 onChange={(e) => setStudentForm({ ...studentForm, rollNo: e.target.value })}
+                error={formErrors.rollNo}
                 required
               />
               <div className="w-full flex flex-col gap-1.5">
@@ -4261,6 +4648,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 placeholder="Enter Father's Name"
                 value={studentForm.fatherName}
                 onChange={(e) => setStudentForm({ ...studentForm, fatherName: e.target.value })}
+                error={formErrors.fatherName}
                 required
               />
               <Input
@@ -4268,6 +4656,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 placeholder="Enter Mother's Name"
                 value={studentForm.motherName}
                 onChange={(e) => setStudentForm({ ...studentForm, motherName: e.target.value })}
+                error={formErrors.motherName}
                 required
               />
             </div>
@@ -4333,10 +4722,11 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                   ...studentForm,
                   address: { ...studentForm.address, state: e.target.value }
                 })}
+                error={formErrors.state}
               />
               <Input
                 label="PINCODE"
-                placeholder="481001"
+                placeholder="481551"
                 value={studentForm.address.pincode}
                 onChange={(e) => setStudentForm({
                   ...studentForm,
@@ -4413,6 +4803,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 placeholder="Enter Email"
                 value={studentForm.email}
                 onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
+                error={formErrors.email}
                 required
               />
               <Input
@@ -4421,11 +4812,41 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 placeholder="Enter Password"
                 value={studentForm.password}
                 onChange={(e) => setStudentForm({ ...studentForm, password: e.target.value })}
+                error={formErrors.password}
                 required
               />
             </div>
           </div>
         </form>
+      </Modal>
+
+      <Modal
+        isOpen={isStudentFormErrorModalOpen}
+        onClose={() => setIsStudentFormErrorModalOpen(false)}
+        title="Student Form Errors"
+        size="sm"
+        footer={
+          <Button size="sm" onClick={() => setIsStudentFormErrorModalOpen(false)}>
+            Close
+          </Button>
+        }
+      >
+        <div className="space-y-3">
+          <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3">
+            <p className="text-sm font-semibold text-red-700">
+              {studentFormErrorTitle || 'Please correct the highlighted fields before submitting.'}
+            </p>
+          </div>
+          <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-100 bg-white">
+            <ul className="divide-y divide-slate-100">
+              {studentFormErrorMessages.map((message, index) => (
+                <li key={`${message}-${index}`} className="px-4 py-3 text-sm text-slate-700">
+                  {message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
       </Modal>
 
       {/* 2. ONBOARD TEACHER MODAL */}
@@ -4664,13 +5085,27 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                     <option value="UKG">UKG</option>
                   </select>
                 </div>
-                <Input
-                  label="ACADEMIC YEAR"
-                  placeholder={CURRENT_ACADEMIC_SESSION}
-                  value={feeStructureForm.academicSession}
-                  onChange={(e) => setFeeStructureForm({ ...feeStructureForm, academicSession: e.target.value })}
-                  required
-                />
+                <div className="w-full flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-slate-700 tracking-wide select-none uppercase">
+                    Academic Year
+                  </label>
+                  <select
+                    className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 rounded-lg transition-all duration-200 cursor-pointer outline-none"
+                    value={feeStructureForm.academicSession}
+                    onChange={(e) => setFeeStructureForm({ ...feeStructureForm, academicSession: e.target.value })}
+                    required
+                    disabled={!academicYearLabels.length}
+                  >
+                    <option value="" disabled>
+                      {academicYearLabels.length ? 'Select session' : 'Create a session first'}
+                    </option>
+                    {academicYearLabels.map((year) => (
+                      <option key={year} value={year}>
+                        {year}{academicYears.find((entry) => entry.label === year)?.isCurrent ? ' (Current)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

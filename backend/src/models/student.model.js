@@ -14,9 +14,15 @@ const studentSchema = new mongoose.Schema(
       unique: true
     },
 
+    // Deprecated compatibility fields. Enrollment is the source of truth for class placement.
     class: {
       type: String,
       required: true
+    },
+
+    section: {
+      type: String,
+      default: ""
     },
 
     rollNo: {
