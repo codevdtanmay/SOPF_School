@@ -272,6 +272,17 @@ export const printReceiptBill = (receipt: {
   paidAmountTotal: number;
   category?: string;
   village?: string;
+  feeSnapshot?: {
+    totalBeforeDiscount?: number;
+    totalDiscount?: number;
+    finalAmount?: number;
+    concessions?: Array<{
+      type?: string;
+      discountType?: string;
+      value?: number;
+      amountDeducted?: number;
+    }>;
+  };
 }) => {
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
@@ -516,10 +527,31 @@ export const printReceiptBill = (receipt: {
                 <div class="amount-txt">₹${(receipt.amount || 0).toLocaleString()}</div>
               </div>
 
+              ${receipt.feeSnapshot ? `
               <div class="row-item">
-                <span class="row-lbl">Tution Fees Master Total:</span>
+                <span class="row-lbl">Base Fee:</span>
+                <span class="row-val">₹${(receipt.feeSnapshot.totalBeforeDiscount || 0).toLocaleString()}</span>
+              </div>
+              ${Array.isArray(receipt.feeSnapshot.concessions) && receipt.feeSnapshot.concessions.length > 0 ? receipt.feeSnapshot.concessions.map((concession) => `
+                <div class="row-item">
+                  <span class="row-lbl">${(concession?.type || 'Concession').replace(/_/g, ' ')}:</span>
+                  <span class="row-val" style="color: #ef4444;">-₹${Number(concession?.amountDeducted || 0).toLocaleString()}</span>
+                </div>
+              `).join('') : ''}
+              <div class="row-item">
+                <span class="row-lbl">Total Discount:</span>
+                <span class="row-val" style="color: #ef4444;">-₹${(receipt.feeSnapshot.totalDiscount || 0).toLocaleString()}</span>
+              </div>
+              <div class="row-item dark">
+                <span class="row-lbl">Final Fee:</span>
+                <span class="row-val" style="color: #10b981;">₹${(receipt.feeSnapshot.finalAmount || 0).toLocaleString()}</span>
+              </div>
+              ` : `
+              <div class="row-item">
+                <span class="row-lbl">Tuition Fees Master Total:</span>
                 <span class="row-val">₹${(receipt.totalFee || 0).toLocaleString()}</span>
               </div>
+              `}
               <div class="row-item">
                 <span class="row-lbl">Cumulative Paid Fees:</span>
                 <span class="row-val" style="color: #10b981;">₹${(receipt.paidAmountTotal || 0).toLocaleString()}</span>

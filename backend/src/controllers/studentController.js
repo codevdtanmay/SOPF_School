@@ -7,9 +7,10 @@ import academicYearModel from "../models/academicYear.model.js";
 import enrollmentModel from "../models/enrollment.model.js";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import { normalizeAcademicYear, normalizeClassLabel, buildClassName, academicYearSortValue } from "../utils/feeLifecycle.js";
+import { normalizeAcademicYear, normalizeClassLabel, normalizeSectionLabel, buildClassName, academicYearSortValue } from "../utils/feeLifecycle.js";
 import { getCurrentAcademicYearDoc, resolveStudentPlacementSync } from "../utils/studentPlacement.js";
 import { resolveAcademicYearQuery } from "../utils/mongoQueryHelpers.js";
+import { calculateStudentFee } from "../services/calculateStudentFee.js";
 
 const DEFAULT_ACADEMIC_SESSION = `${new Date().getFullYear()}-${String(
   new Date().getFullYear() + 1
@@ -62,6 +63,88 @@ const normalizeOptionalDate = (value) => {
 
 const academicSessionSortValue = (value) => {
   return academicYearSortValue(value);
+};
+
+const resolveAcademicYearDoc = async (value) => {
+  const normalized = normalizeAcademicSession(value);
+
+  if (!normalized) {
+    return getCurrentAcademicYearDoc();
+  }
+
+  return academicYearModel.findOne(resolveAcademicYearQuery(normalized));
+};
+
+const resolveConcessionAcademicYearId = async (value, fallbackAcademicYearDoc = null) => {
+  if (!value) {
+    return fallbackAcademicYearDoc?._id || null;
+  }
+
+  if (typeof value === "object") {
+    return value._id || value.id || fallbackAcademicYearDoc?._id || null;
+  }
+
+  const normalized = normalizeAcademicSession(value);
+  if (!normalized) {
+    return fallbackAcademicYearDoc?._id || null;
+  }
+
+  const academicYearDoc = await academicYearModel.findOne(resolveAcademicYearQuery(normalized));
+  return academicYearDoc?._id || fallbackAcademicYearDoc?._id || null;
+};
+
+const normalizeConcessionsForPersistence = async (concessions = [], fallbackAcademicYearDoc = null) => {
+  if (!Array.isArray(concessions)) {
+    return [];
+  }
+
+  const normalizedConcessions = [];
+
+  for (const concession of concessions) {
+    if (!concession || typeof concession !== "object") {
+      continue;
+    }
+
+    normalizedConcessions.push({
+      ...concession,
+      academicYear: await resolveConcessionAcademicYearId(concession.academicYear, fallbackAcademicYearDoc)
+    });
+  }
+
+  return normalizedConcessions;
+};
+
+const findFeeStructureForStudent = async (studentClass, academicYear = "") => {
+  const normalizedStudentClass = normalizeClassLabel(studentClass);
+  const normalizedAcademicYear = normalizeAcademicYear(academicYear);
+
+  if (!normalizedStudentClass || !normalizedAcademicYear) {
+    return null;
+  }
+
+  const exactMatch = await feeStructureModel.findOne({
+    isDeleted: false,
+    class: new RegExp(`^${escapeRegex(String(studentClass || "").trim())}$`, "i"),
+    academicYear: normalizedAcademicYear
+  });
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  const feeStructures = await feeStructureModel
+    .find({
+      isDeleted: false,
+      academicYear: normalizedAcademicYear
+    })
+    .sort({ createdAt: -1 });
+
+  return (
+    feeStructures.find(
+      (feeStructure) =>
+        normalizeClassLabel(feeStructure.class) === normalizedStudentClass
+    ) || null
+  );
 };
 
 const getAvailableAcademicSessions = async () => {
@@ -197,8 +280,9 @@ const addStudent = async (req, res) => {
       panNo,
       bankDetails,
       usesTransport,
-
-      address
+      address,
+      admissionType,
+      concessions
     } = req.body;
 
     const normalizedEmail = String(email || "").trim().toLowerCase();
@@ -344,13 +428,31 @@ const addStudent = async (req, res) => {
     let student;
 
     try {
-      await addSession.withTransaction(async () => {
         const user = await userModel.create([{
           name,
           email: normalizedEmail,
           password: hashedPassword,
           role: "student"
         }], { session: addSession });
+
+        const studentConcessions = Array.isArray(concessions) ? [...concessions] : [];
+        if (String(req.body.feeCategory || "REGULAR") === "RTE") {
+          studentConcessions.push({
+            type: "RTE",
+            discountType: "full_waiver",
+            value: 0,
+            appliesTo: ["all"],
+            academicYear: academicYearDoc?._id || null,
+            remarks: "RTE admission concession",
+            createdBy: req.user?.id || null,
+            autoManaged: false
+          });
+        }
+
+        const normalizedStudentConcessions = await normalizeConcessionsForPersistence(
+          studentConcessions,
+          academicYearDoc
+        );
 
         const createdStudent = await studentModel.create([{
           userId: user[0]._id,
@@ -360,6 +462,9 @@ const addStudent = async (req, res) => {
           class: normalizedStudentClass,
           rollNo,
           academicYear: resolvedAcademicYear,
+          admissionType: String(admissionType || "new").trim().toLowerCase() === "old" ? "old" : "new",
+          feeCategory: String(req.body.feeCategory || "REGULAR").trim().toUpperCase(),
+          concessions: normalizedStudentConcessions,
           section: String(req.body.section || "").trim(),
           lifecycleStatus: lifecycleStatus || "Active",
 
@@ -399,8 +504,29 @@ const addStudent = async (req, res) => {
             rollNo: rollNo ? Number(rollNo) : null,
             status: "active"
           }], { session: addSession });
+
         }
-      });
+
+        const refreshedStudent = await studentModel.findById(student._id).session(addSession);
+        const feeCalculation = await calculateStudentFee(
+          {
+            ...refreshedStudent.toObject(),
+            admissionType: refreshedStudent.admissionType || "new"
+          },
+          feeStructure,
+          academicYearDoc || resolvedAcademicYear
+        );
+        await studentModel.updateOne(
+          { _id: student._id },
+          {
+            $set: {
+              totalFee: feeCalculation.finalAmount,
+              dueAmount: feeCalculation.finalAmount,
+              feeStructureId: feeStructure._id
+            }
+          },
+          { session: addSession }
+        );
     } finally {
       await addSession.endSession();
     }
@@ -472,6 +598,8 @@ const getStudents = async (req, res) => {
       class: studentClass,
       section,
       academicYear,
+      admissionType,
+      feeCategory,
       lifecycleStatus,
       category,
       village,
@@ -502,7 +630,7 @@ const getStudents = async (req, res) => {
 
     const resolvedAcademicYearLabel = academicYearDoc?.label || normalizeAcademicSession(academicYear) || (await getCurrentAcademicYear());
 
-    const mergeStudent = (student, enrollment) => {
+    const mergeStudent = async (student, enrollment) => {
       const placement = resolveStudentPlacementSync(student, enrollment);
       const studentObject = student.toObject ? student.toObject() : student;
 
@@ -511,6 +639,7 @@ const getStudents = async (req, res) => {
         class: placement.className,
         section: placement.section,
         academicYear: placement.academicYear || resolvedAcademicYearLabel || studentObject.academicYear || "",
+        admissionType: studentObject.admissionType || "new",
         currentEnrollment: enrollment || null
       };
     };
@@ -530,6 +659,10 @@ const getStudents = async (req, res) => {
 
       if (category) {
         filter.category = category;
+      }
+
+      if (feeCategory && feeCategory !== "All") {
+        filter.feeCategory = String(feeCategory || "REGULAR").trim().toUpperCase();
       }
 
       if (village) {
@@ -575,6 +708,9 @@ const getStudents = async (req, res) => {
             isDeleted: false,
             ...(lifecycleStatus ? { lifecycleStatus } : {}),
             ...(category ? { category } : {}),
+            ...(feeCategory && feeCategory !== "All"
+              ? { feeCategory: String(feeCategory || "REGULAR").trim().toUpperCase() }
+              : {}),
             ...(village ? { "address.village": new RegExp(escapeRegex(String(village).trim()), "i") } : {})
           },
           populate: {
@@ -585,16 +721,18 @@ const getStudents = async (req, res) => {
         .populate("academicYear", "label isCurrent")
         .populate("promotedFrom");
 
-      results = enrollments
-        .filter((enrollment) => enrollment.student)
-        .map((enrollment) => mergeStudent(enrollment.student, enrollment));
+      results = await Promise.all(
+        enrollments
+          .filter((enrollment) => enrollment.student)
+          .map((enrollment) => mergeStudent(enrollment.student, enrollment))
+      );
     } else {
       const legacyFilter = buildLegacyFilter();
       const legacyStudents = await studentModel
         .find(legacyFilter)
         .populate("userId", "name email");
 
-      results = legacyStudents.map((student) => mergeStudent(student, null));
+      results = await Promise.all(legacyStudents.map((student) => mergeStudent(student, null)));
     }
 
     if (studentClass) {
@@ -603,6 +741,15 @@ const getStudents = async (req, res) => {
 
     if (section) {
       results = results.filter((student) => matchesNormalizedSection(student.section, section));
+    }
+
+    if (admissionType && admissionType !== "All") {
+      results = results.filter((student) => String(student.admissionType || "new") === admissionType);
+    }
+
+    if (feeCategory && feeCategory !== "All") {
+      const normalizedFeeCategory = String(feeCategory || "REGULAR").trim().toUpperCase();
+      results = results.filter((student) => String(student.feeCategory || "REGULAR").trim().toUpperCase() === normalizedFeeCategory);
     }
 
     if (search) {
@@ -785,9 +932,11 @@ const getStudentFinancialHistory = async (req, res) => {
           (payment) => normalizeAcademicYear(payment.academicYear) === academicYear
         );
         const snapshotPayment = yearPayments[0] || null;
+        const academicYearDoc = await resolveAcademicYearDoc(academicYear);
 
         const activeEnrollment = await getEnrollmentPlacement(student._id, academicYear);
         const className = snapshotPayment?.className || activeEnrollment?.class || String(student.class || "").trim();
+        const section = snapshotPayment?.section || activeEnrollment?.section || String(student.section || "").trim();
         const feeStructure = snapshotPayment?.feeStructureId
           ? await feeStructureModel.findOne({
               _id: snapshotPayment.feeStructureId,
@@ -799,7 +948,27 @@ const getStudentFinancialHistory = async (req, res) => {
           (sum, payment) => sum + Number(payment.paidAmount ?? payment.amount ?? 0),
           0
         );
-        const feeStructureTotal = Number(feeStructure?.totalFee || 0);
+        const feeCalculation = snapshotPayment?.feeSnapshot
+          ? snapshotPayment.feeSnapshot
+          : feeStructure
+            ? await calculateStudentFee(
+                {
+                  ...student.toObject(),
+                  class: className,
+                  section,
+                  academicYear,
+                  admissionType: student.admissionType || "new"
+                },
+                feeStructure,
+                academicYearDoc || academicYear
+              )
+            : null;
+        const feeSnapshot = feeCalculation || snapshotPayment?.feeSnapshot || null;
+        const feeStructureTotal = Number(
+          feeSnapshot?.finalAmount ??
+          feeStructure?.totalFee ??
+          0
+        );
         const fallbackTotal = yearPayments.reduce(
           (max, payment) =>
             Math.max(max, Number(payment.paidAmount ?? 0) + Number(payment.dueAmount ?? 0)),
@@ -808,7 +977,7 @@ const getStudentFinancialHistory = async (req, res) => {
         const totalFee = feeStructureTotal || fallbackTotal;
         const dueAmount = Math.max(0, totalFee - paidAmount);
         const status =
-          dueAmount <= 0 && totalFee > 0
+          dueAmount <= 0 && totalFee >= 0
             ? "Paid"
             : paidAmount > 0
               ? "Partial"
@@ -817,10 +986,14 @@ const getStudentFinancialHistory = async (req, res) => {
         return {
           academicYear,
           className,
+          section,
+          admissionType: feeSnapshot?.admissionType || student.admissionType || "new",
+          feeCategory: String(student.feeCategory || "REGULAR").trim().toUpperCase(),
           totalFee,
           paidAmount,
           dueAmount,
           status,
+          feeSnapshot,
           installments: buildMonthlyInstallments(yearPayments),
           payments: yearPayments.map((payment) => ({
             id: payment._id,
@@ -832,8 +1005,10 @@ const getStudentFinancialHistory = async (req, res) => {
             paymentMethod: payment.paymentMethod || "Cash",
             month: payment.month || "",
             className: payment.className || className,
+            section: payment.section || section,
             admissionNo: payment.admissionNo || student.admissionNo || "",
-            studentName: payment.studentName || student.userId?.name || ""
+            studentName: payment.studentName || student.userId?.name || "",
+            feeSnapshot: payment.feeSnapshot || null
           })),
           receipts: yearPayments.map((payment) => ({
             receiptNo: payment.receiptNo,
@@ -841,9 +1016,11 @@ const getStudentFinancialHistory = async (req, res) => {
             amount: Number(payment.amount ?? payment.paidAmount ?? 0),
             paymentMethod: payment.paymentMethod || "Cash",
             className: payment.className || className,
+            section: payment.section || section,
             academicYear: payment.academicYear || academicYear,
             admissionNo: payment.admissionNo || student.admissionNo || "",
-            studentName: payment.studentName || student.userId?.name || ""
+            studentName: payment.studentName || student.userId?.name || "",
+            feeSnapshot: payment.feeSnapshot || null
           }))
         };
       })
@@ -859,6 +1036,70 @@ const getStudentFinancialHistory = async (req, res) => {
         academicYear: currentEnrollmentYear
       },
       history
+    });
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error"
+    });
+  }
+};
+
+const getFeePreview = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const requestedAcademicYear = normalizeAcademicSession(req.query?.academicYear);
+
+    const student = await studentModel.findById(id).populate("userId", "name email");
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student not found"
+      });
+    }
+
+    const academicYearDoc = await resolveAcademicYearDoc(
+      requestedAcademicYear || student.academicYear
+    );
+
+    if (!academicYearDoc) {
+      return res.status(404).json({
+        success: false,
+        message: "Academic year not found"
+      });
+    }
+
+    const placement = await resolveStudentPlacementSync(student, student.currentEnrollment || null);
+    const structure = await findFeeStructureForStudent(
+      placement.className || student.class,
+      academicYearDoc.label || requestedAcademicYear || student.academicYear
+    );
+
+    if (!structure) {
+      return res.status(404).json({
+        success: false,
+        message: "Fee structure not found"
+      });
+    }
+
+    const feeSnapshot = await calculateStudentFee(
+      {
+        ...student.toObject(),
+        class: placement.className || student.class || "",
+        section: placement.section || student.section || "",
+        admissionType: student.admissionType || "new"
+      },
+      structure,
+      academicYearDoc
+    );
+
+    return res.status(200).json({
+      success: true,
+      admissionType: student.admissionType || "new",
+      ...feeSnapshot
     });
   } catch (error) {
     console.error(error);
@@ -1125,6 +1366,19 @@ const promoteStudents = async (req, res) => {
             promotedFrom: enrollment._id
           }], { session: promotionSession });
 
+          await studentModel.updateOne(
+            { _id: student._id },
+            {
+              $set: {
+                class: normalizedDestinationClass,
+                section: normalizedDestinationSection,
+                academicYear: normalizedDestinationAcademicYear,
+                admissionType: "old"
+              }
+            },
+            { session: promotionSession }
+          );
+
           await promotionHistoryModel.create([{
             studentId: student._id,
             promotedBy: req.user.id,
@@ -1150,6 +1404,7 @@ const promoteStudents = async (req, res) => {
             isPassedOut: isPassedOutPromotion
           });
         }
+
       });
     } finally {
       await promotionSession.endSession();
@@ -1190,14 +1445,16 @@ const updatebyId = async (req, res) => {
 
     const { id } = req.params;
 
-    const {
-      name,
-      email,
+      const {
+        name,
+        email,
 
       class: studentClass,
       section,
       rollNo,
       academicYear,
+      admissionType,
+      feeCategory,
       lifecycleStatus,
 
       fatherName,
@@ -1216,10 +1473,11 @@ const updatebyId = async (req, res) => {
       panNo,
       bankDetails,
       address,
+      concessions,
       usesTransport
     } = req.body;
 
-    const student = await studentModel.findById(id);
+    const student = await studentModel.findById(id).populate("userId", "name email");
 
     if (!student) {
 
@@ -1230,17 +1488,13 @@ const updatebyId = async (req, res) => {
 
     }
 
-    await userModel.findByIdAndUpdate(student.userId, {
-      name,
-      email,
-      
-    });
-
-    const normalizedAcademicYear = normalizeAcademicSession(academicYear) || student.academicYear || "";
+    const resolvedName = name !== undefined ? name : (student.userId?.name || "");
+    const resolvedEmail = email !== undefined ? email : (student.userId?.email || "");
+    const normalizedAcademicYear = normalizeAcademicSession(academicYear !== undefined ? academicYear : student.academicYear) || "";
     const normalizedSection = section === undefined || section === null
       ? String(student.section || "").trim()
       : String(section || "").trim();
-    const normalizedClass = String(studentClass || "").trim();
+    const normalizedClass = String(studentClass !== undefined ? studentClass : student.class || "").trim();
     let feeStructure = null;
 
     if (student.class !== normalizedClass || normalizeAcademicSession(student.academicYear) !== normalizedAcademicYear) {
@@ -1260,32 +1514,75 @@ const updatebyId = async (req, res) => {
       academicYearDoc = await getCurrentAcademicYearDoc();
     }
 
+    const normalizedFeeCategory = String(feeCategory !== undefined ? feeCategory : student.feeCategory || "REGULAR").trim().toUpperCase();
+    const baseConcessions = Array.isArray(concessions)
+      ? [...concessions]
+      : (Array.isArray(student.concessions) ? [...student.concessions] : []);
+    const updatedConcessions = await normalizeConcessionsForPersistence(baseConcessions, academicYearDoc);
+    const rteConcessionIndex = updatedConcessions.findIndex(
+      (concession) =>
+        concession.type === "RTE" &&
+        String(concession.academicYear) === String(academicYearDoc?._id || academicYearDoc || normalizedAcademicYear)
+    );
+
+    if (normalizedFeeCategory === "RTE") {
+      const rteConcession = {
+        type: "RTE",
+        discountType: "full_waiver",
+        value: 0,
+        appliesTo: ["all"],
+        academicYear: academicYearDoc?._id || null,
+        remarks: "RTE admission concession",
+        createdBy: req.user?.id || null,
+        autoManaged: false
+      };
+
+      if (rteConcessionIndex >= 0) {
+        updatedConcessions[rteConcessionIndex] = {
+          ...updatedConcessions[rteConcessionIndex],
+          ...rteConcession
+        };
+      } else {
+        updatedConcessions.push(rteConcession);
+      }
+    } else if (rteConcessionIndex >= 0) {
+      updatedConcessions.splice(rteConcessionIndex, 1);
+    }
+
     const updatePayload = {
-      class: normalizedClass,
+      class: normalizedClass || student.class,
       section: normalizedSection,
-      rollNo,
+      rollNo: rollNo !== undefined ? rollNo : student.rollNo,
 
-      fatherName,
-      motherName,
-      phone,
+      fatherName: fatherName !== undefined ? fatherName : student.fatherName,
+      motherName: motherName !== undefined ? motherName : student.motherName,
+      phone: phone !== undefined ? phone : student.phone,
 
-      gender,
+      gender: gender !== undefined ? gender : student.gender,
       dateOfBirth,
       joiningDate,
 
-      category,
+      category: category !== undefined ? category : student.category,
+
+      admissionType: admissionType === "old" ? "old" : (admissionType === "new" ? "new" : student.admissionType || "new"),
+      feeCategory: normalizedFeeCategory,
+      concessions: updatedConcessions,
 
       academicYear: normalizedAcademicYear || student.academicYear,
 
-      aadharNo,
-      samagraId,
-      apaarId,
-      panNo,
-      bankDetails,
-      address,
+      aadharNo: aadharNo !== undefined ? aadharNo : student.aadharNo,
+      samagraId: samagraId !== undefined ? samagraId : student.samagraId,
+      apaarId: apaarId !== undefined ? apaarId : student.apaarId,
+      panNo: panNo !== undefined ? panNo : student.panNo,
+      bankDetails: bankDetails !== undefined ? bankDetails : student.bankDetails,
+      address: address !== undefined ? address : student.address,
+      dateOfBirth: normalizeOptionalDate(dateOfBirth) ?? student.dateOfBirth,
+      joiningDate: normalizeOptionalDate(joiningDate) ?? student.joiningDate,
 
       usesTransport:
-        usesTransport === true || usesTransport === "Yes",
+        usesTransport === undefined
+          ? Boolean(student.usesTransport)
+          : usesTransport === true || usesTransport === "Yes",
 
       ...(lifecycleStatus
         ? { lifecycleStatus }
@@ -1303,10 +1600,9 @@ const updatebyId = async (req, res) => {
     let updatedStudent;
 
     try {
-      await session.withTransaction(async () => {
         await userModel.findByIdAndUpdate(student.userId, {
-          name,
-          email
+          name: resolvedName,
+          email: resolvedEmail
         }, { session });
 
         if (academicYearDoc) {
@@ -1333,6 +1629,26 @@ const updatebyId = async (req, res) => {
           } else {
             await enrollmentModel.create([enrollmentPayload], { session });
           }
+
+          if (["Left", "Alumni", "Transferred"].includes(lifecycleStatus)) {
+            await enrollmentModel.updateOne(
+              {
+                student: student._id,
+                academicYear: academicYearDoc._id
+              },
+              {
+                $set: {
+                  status:
+                    lifecycleStatus === "Left"
+                      ? "left"
+                      : lifecycleStatus === "Transferred"
+                        ? "transferred"
+                        : "alumni"
+                }
+              },
+              { session }
+            );
+          }
         }
 
         await studentModel.findByIdAndUpdate(
@@ -1348,7 +1664,39 @@ const updatebyId = async (req, res) => {
           .findById(id)
           .populate("userId", "name email")
           .session(session);
-      });
+
+        const effectiveFeeStructure =
+          feeStructure ||
+          (student.feeStructureId
+            ? await feeStructureModel.findById(student.feeStructureId).session(session)
+            : null);
+
+        if (updatedStudent && effectiveFeeStructure && academicYearDoc) {
+          const feeCalculation = await calculateStudentFee(
+            {
+              ...updatedStudent.toObject(),
+              admissionType: updatedStudent.admissionType || "new"
+            },
+            effectiveFeeStructure,
+            academicYearDoc
+          );
+          await studentModel.updateOne(
+            { _id: id },
+            {
+              $set: {
+                totalFee: feeCalculation.finalAmount,
+                dueAmount: Math.max(0, feeCalculation.finalAmount - Number(updatedStudent.paidAmount || 0)),
+                feeStructureId: effectiveFeeStructure._id
+              }
+            },
+            { session }
+          );
+
+          updatedStudent = await studentModel
+            .findById(id)
+            .populate("userId", "name email")
+            .session(session);
+        }
     } finally {
       await session.endSession();
     }
@@ -1371,7 +1719,6 @@ const updatebyId = async (req, res) => {
 
 };
 
-
 // =========================
 // DELETE (SOFT DELETE)
 // =========================
@@ -1393,15 +1740,37 @@ const deletebyId = async (req, res) => {
 
     }
 
-    await studentModel.findByIdAndUpdate(id, {
-      isDeleted: true,
-      deletedAt: new Date()
-    });
+    const session = await mongoose.startSession();
 
-    await userModel.findByIdAndUpdate(student.userId, {
-      isDeleted: true,
-      deletedAt: new Date()
-    });
+    try {
+      await session.withTransaction(async () => {
+        const latestEnrollment = await enrollmentModel
+          .findOne({ student: student._id })
+          .sort({ createdAt: -1 })
+          .session(session);
+
+        await studentModel.findByIdAndUpdate(id, {
+          isDeleted: true,
+          deletedAt: new Date()
+        }, { session });
+
+        await userModel.findByIdAndUpdate(student.userId, {
+          isDeleted: true,
+          deletedAt: new Date()
+        }, { session });
+
+        if (latestEnrollment) {
+          await enrollmentModel.updateOne(
+            { _id: latestEnrollment._id },
+            { $set: { status: "left" } },
+            { session }
+          );
+
+        }
+      });
+    } finally {
+      await session.endSession();
+    }
 
     return res.status(200).json({
       success: true,
@@ -1426,6 +1795,7 @@ export default {
   getStudents,
   getStudentbyId,
   getStudentFinancialHistory,
+  getFeePreview,
   getPromotionAcademicYears,
   getPromotionHistory,
   promoteStudents,

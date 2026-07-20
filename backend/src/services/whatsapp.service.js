@@ -79,8 +79,11 @@ Thank you.
 };
 
 const buildFeeReceiptText = (receipt = {}) => {
+  const feeSnapshot = receipt.feeSnapshot || {};
   const paidAmount = Number(receipt.amount ?? receipt.paidAmount ?? 0);
   const dueAmount = Number(receipt.dueAmount ?? receipt.dueAmountRemaining ?? 0);
+  const totalFee = Number(feeSnapshot.finalAmount ?? receipt.totalFee ?? 0);
+  const discount = Number(feeSnapshot.totalDiscount ?? 0);
 
   return `🏫 *The School of Pansy Flowers*
 
@@ -95,6 +98,8 @@ We have successfully received your fee payment.
 
 📦 *Installment:* ${formatFeeInstallmentLabel(receipt.month)}
 
+💼 *Total Fee:* ₹${totalFee.toLocaleString("en-IN")}
+🏷️ *Discount:* ₹${discount.toLocaleString("en-IN")}
 💰 *Paid:* ₹${paidAmount.toLocaleString("en-IN")}
 ⏳ *Due:* ₹${dueAmount.toLocaleString("en-IN")}
 
@@ -290,31 +295,20 @@ export const sendFeeReceiptMessage = async ({
   dueAmount,
   paymentMethod,
   receiptNo,
+  feeSnapshot,
 }) => {
-  const message = `🏫 *The School of Pansy Flowers*
-
-Dear Parent,
-
-We have successfully received your fee payment.
-
-👤 *Student:* ${studentName}
-🆔 *Admission No:* ${admissionNo}
-🏫 *Class:* ${className}
-📚 *Academic Year:* ${academicYear}
-
-📦 *Installment:* ${installment}
-
-💰 *Paid:* ₹${Number(paidAmount).toLocaleString("en-IN")}
-⏳ *Due:* ₹${Number(dueAmount).toLocaleString("en-IN")}
-
-💳 *Payment Mode:* ${paymentMethod}
-🧾 *Receipt No:* ${receiptNo}
-
-Thank you.
-
-*The School of Pansy Flowers*`;
-
-
+  const message = buildFeeReceiptText({
+    studentName,
+    admissionNo,
+    className,
+    academicYear,
+    installment,
+    amount: paidAmount,
+    dueAmount,
+    paymentMethod,
+    receiptNo,
+    feeSnapshot
+  });
   return sendTextMessage(phone, message);
 };
 
@@ -405,7 +399,15 @@ export const sendFeeReceiptPdfMessage = async ({
       amount: receipt?.amount ?? receipt?.paidAmount ?? 0,
       amountCaption: "Net Paid Settle",
       summaryRows: [
-        { label: "Tution Fees Master Total", value: receipt?.totalFee ?? 0, currency: true },
+        ...(receipt?.feeSnapshot
+          ? [
+              { label: "Base Fee", value: receipt.feeSnapshot.totalBeforeDiscount ?? 0, currency: true },
+              { label: "Discount", value: receipt.feeSnapshot.totalDiscount ?? 0, valueColor: "#ef4444", currency: true },
+              { label: "Final Fee", value: receipt.feeSnapshot.finalAmount ?? 0, valueColor: "#10b981", currency: true }
+            ]
+          : [
+              { label: "Tution Fees Master Total", value: receipt?.totalFee ?? 0, currency: true }
+            ]),
         { label: "Cumulative Paid Fees", value: receipt?.paidAmountTotal ?? receipt?.paidAmount ?? 0, valueColor: "#10b981", currency: true },
         { label: "Remaining Due Fees", value: receipt?.dueAmount ?? receipt?.dueAmountRemaining ?? 0, valueColor: "#ef4444", emphasis: true, currency: true }
       ],

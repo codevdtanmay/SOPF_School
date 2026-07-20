@@ -5,6 +5,7 @@ import enrollmentModel from "../models/enrollment.model.js";
 import feeStructureModel from "../models/feeStructure.js";
 import academicYearModel from "../models/academicYear.model.js";
 import { resolveAcademicYearQuery } from "../utils/mongoQueryHelpers.js";
+import { calculateStudentFee } from "../services/calculateStudentFee.js";
 
 const normalizeClassLabel = (value = "") =>
   String(value || "")
@@ -30,6 +31,11 @@ const resolveDashboardAcademicYear = async (academicYearInput = "") => {
 
   return academicYearModel.findOne().sort({ startDate: -1, createdAt: -1 });
 };
+
+const findStructureForClass = (structures = [], studentClass = "") =>
+  structures.find(
+    (item) => normalizeClassLabel(item.class) === normalizeClassLabel(studentClass)
+  ) || null;
 
 const getDashboardStats = async (req, res) => {
   try {
@@ -99,15 +105,24 @@ const getDashboardStats = async (req, res) => {
         })
       : [];
 
-    const paymentSummaries = activeEnrollments.map((enrollment) => {
+    const paymentSummaries = await Promise.all(activeEnrollments.map(async (enrollment) => {
       const student = enrollment.student;
       const className = String(enrollment.class || student.class || "").trim();
-      const normalizedClassName = normalizeClassLabel(className);
-      const structure =
-        selectedYearStructures.find(
-          (item) => normalizeClassLabel(item.class) === normalizedClassName
-        ) || null;
-      const totalFee = Number(structure?.totalFee || student.totalFee || 0);
+      const structure = findStructureForClass(selectedYearStructures, className);
+      const feeCalculation = structure
+        ? await calculateStudentFee(
+            {
+              ...student.toObject(),
+              class: className,
+              section: enrollment.section || student.section || "",
+              academicYear: selectedAcademicYear || student.academicYear || "",
+              admissionType: student.admissionType || "new"
+            },
+            structure,
+            academicYearDoc || selectedAcademicYear
+          )
+        : null;
+      const totalFee = Number(feeCalculation?.finalAmount ?? structure?.totalFee ?? student.totalFee ?? 0);
       const totalPaid = paymentsByStudentId.get(String(student._id)) || 0;
 
       return {
@@ -116,7 +131,7 @@ const getDashboardStats = async (req, res) => {
         pending: totalPaid <= 0,
         due: Math.max(0, totalFee - totalPaid)
       };
-    });
+    }));
 
     const pendingFees = paymentSummaries.reduce((sum, item) => sum + item.due, 0);
     const paidStudents = paymentSummaries.filter((item) => item.paid).length;
@@ -205,18 +220,27 @@ const getFeeSummary = async (req, res) => {
         })
       : [];
 
-    const pendingTotals = activeEnrollments.map((enrollment) => {
+    const pendingTotals = await Promise.all(activeEnrollments.map(async (enrollment) => {
       const student = enrollment.student;
       const className = String(enrollment.class || student.class || "").trim();
-      const normalizedClassName = normalizeClassLabel(className);
-      const structure =
-        selectedYearStructures.find(
-          (item) => normalizeClassLabel(item.class) === normalizedClassName
-        ) || null;
-      const totalFee = Number(structure?.totalFee || student.totalFee || 0);
+      const structure = findStructureForClass(selectedYearStructures, className);
+      const feeCalculation = structure
+        ? await calculateStudentFee(
+            {
+              ...student.toObject(),
+              class: className,
+              section: enrollment.section || student.section || "",
+              academicYear: selectedAcademicYear || student.academicYear || "",
+              admissionType: student.admissionType || "new"
+            },
+            structure,
+            academicYearDoc || selectedAcademicYear
+          )
+        : null;
+      const totalFee = Number(feeCalculation?.finalAmount ?? structure?.totalFee ?? student.totalFee ?? 0);
       const totalPaid = paymentsByStudentId.get(String(student._id)) || 0;
       return Math.max(0, totalFee - totalPaid);
-    });
+    }));
 
     const pending = pendingTotals.reduce((sum, value) => sum + value, 0);
 

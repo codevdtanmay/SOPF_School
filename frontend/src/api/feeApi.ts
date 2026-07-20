@@ -46,11 +46,25 @@ const mapPaymentResponse = (p: any): FeeHistoryItem => {
 };
 
 export const feeApi = {
+  getStudentFeeDetails: async (studentId: string, academicYear?: string) => {
+    const queryParams = new URLSearchParams();
+    if (academicYear && academicYear !== 'All') {
+      queryParams.append('academicYear', academicYear);
+    }
+
+    const response = await axiosInstance.get(
+      `/fees/student/${studentId}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`
+    );
+    return response.data;
+  },
+
   getFeeLedger: async (params?: {
     class?: string;
     section?: string;
     academicYear?: string;
     status?: string;
+    admissionType?: string;
+    feeCategory?: string;
     page?: number;
     limit?: number;
     search?: string;
@@ -60,6 +74,8 @@ export const feeApi = {
     if (params?.section && params.section !== 'All') queryParams.append('section', params.section);
     if (params?.academicYear && params.academicYear !== 'All') queryParams.append('academicYear', params.academicYear);
     if (params?.status && params.status !== 'All') queryParams.append('status', params.status);
+    if (params?.admissionType && params.admissionType !== 'All') queryParams.append('admissionType', params.admissionType);
+    if (params?.feeCategory && params.feeCategory !== 'All') queryParams.append('feeCategory', params.feeCategory);
     if (params?.page) queryParams.append('page', String(params.page));
     if (params?.limit) queryParams.append('limit', String(params.limit));
     if (params?.search) queryParams.append('search', params.search);

@@ -67,7 +67,7 @@ import { feeStructureApi } from '../../api/feeStructureApi';
 import { feeApi } from '../../api/feeApi';
 import { transportApi } from '../../modules/transport/api/transportApi';
 import { useAuth } from '../../context/AuthContext';
-import { AcademicYear, DashboardStats, Notice, Activity, FeeSummary, Student, Teacher, FeeStructure, PromotionHistoryEntry, FinancialHistoryEntry } from '../../types';
+import { AcademicYear, DashboardStats, Notice, Activity, FeeSummary as FeeSummaryStats, Student, Teacher, FeeStructure, PromotionHistoryEntry, FinancialHistoryEntry } from '../../types';
 
 interface AdminDashboardProps {
   currentTab: string;
@@ -108,6 +108,107 @@ const normalizeClassFilterLabel = (value: string) => {
   }
 
   return normalized.replace(/\s+/g, ' ');
+};
+
+const formatFeeCategoryLabel = (value?: string) => {
+  const normalized = String(value || '').trim().toUpperCase();
+
+  switch (normalized) {
+    case 'REGULAR':
+      return 'Regular';
+    case 'RTE':
+      return 'RTE';
+    case 'STAFF_CHILD':
+      return 'Staff Child';
+    case 'SCHOLARSHIP':
+      return 'Scholarship';
+    case 'OTHER':
+      return 'Other';
+    default:
+      return normalized.replace(/_/g, ' ');
+  }
+};
+
+const formatAdmissionTypeLabel = (value?: string) => {
+  const normalized = String(value || 'new').trim().toUpperCase();
+  return normalized === 'OLD' ? 'Old' : 'New';
+};
+
+const getAdmissionTypeBadgeVariant = (value?: string) =>
+  String(value || 'new').trim().toLowerCase() === 'old' ? 'slate' : 'info';
+
+const getFeeSnapshotConcessions = (feeSnapshot?: any) => {
+  if (!feeSnapshot) {
+    return [];
+  }
+
+  if (Array.isArray(feeSnapshot.concessionsApplied) && feeSnapshot.concessionsApplied.length > 0) {
+    return feeSnapshot.concessionsApplied;
+  }
+
+  if (Array.isArray(feeSnapshot.concessions) && feeSnapshot.concessions.length > 0) {
+    return feeSnapshot.concessions;
+  }
+
+  return [];
+};
+
+const formatConcessionLabel = (concession: any) => {
+  const rawType = String(concession?.type || concession?.discountType || 'Concession').trim();
+  const normalizedType = rawType.replace(/_/g, ' ');
+  const percent = Number(concession?.value);
+
+  if (rawType.toUpperCase() === 'RTE') {
+    return 'RTE waiver';
+  }
+
+  if (rawType.toUpperCase() === 'SIBLING') {
+    return Number.isFinite(percent) ? `Sibling discount (${percent}%)` : 'Sibling discount';
+  }
+
+  return normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1);
+};
+
+const formatConcessionSummaryLine = (concession: any) => {
+  const label = formatConcessionLabel(concession);
+  const amount = Number(concession?.amountDeducted ?? concession?.value ?? 0);
+  return `${label} -₹${amount.toLocaleString()}`;
+};
+
+const formatConcessionSummary = (feeSnapshot?: any) => {
+  const concessions = getFeeSnapshotConcessions(feeSnapshot);
+  return concessions.length > 0 ? concessions.map(formatConcessionSummaryLine) : [];
+};
+
+const isRteWaivedFee = (feeCategory?: string, feeSnapshot?: any, totalFee?: number) =>
+  String(feeCategory || feeSnapshot?.feeCategory || '').trim().toUpperCase() === 'RTE' &&
+  Number(totalFee || feeSnapshot?.finalAmount || 0) <= 0;
+
+const getScaledInstallmentAmounts = (matchingFS: FeeStructure | null, feeSnapshot?: any, totalFee?: number) => {
+  if (!matchingFS) {
+    return null;
+  }
+
+  const originalTotal = Number(
+    feeSnapshot?.totalBeforeDiscount ??
+    matchingFS.totalFee ??
+    (
+      Number(matchingFS.juneAmount || 0) +
+      Number(matchingFS.septemberAmount || 0) +
+      Number(matchingFS.decemberAmount || 0) +
+      Number(matchingFS.marchAmount || 0)
+    )
+  );
+  const effectiveTotal = Number(totalFee ?? feeSnapshot?.finalAmount ?? matchingFS.totalFee ?? 0);
+  const scale = originalTotal > 0 ? Math.max(0, effectiveTotal) / originalTotal : 0;
+  const roundScaled = (value: number) => Math.max(0, Math.round(Number(value || 0) * scale));
+
+  return {
+    juneAmount: roundScaled(matchingFS.juneAmount || 0),
+    septemberAmount: roundScaled(matchingFS.septemberAmount || 0),
+    decemberAmount: roundScaled(matchingFS.decemberAmount || 0),
+    marchAmount: roundScaled(matchingFS.marchAmount || 0)
+  };
 };
 
 const FINANCIAL_YEAR_MONTHS = [
@@ -171,8 +272,21 @@ const REPORT_COLUMNS: ReportColumn[] = [
   { id: 'bankBranchName', label: 'Branch Name', category: 'Bank Details' }
 ];
 
+const REPORT_COLUMN_CATEGORIES: ReportColumn['category'][] = [
+  'Basic Information',
+  'Personal Information',
+  'Parent Information',
+  'Government IDs',
+  'Address',
+  'Fee Information',
+  'Transport',
+  'Bank Details'
+];
+
 const DEFAULT_REPORT_COLUMNS = ['name', 'admissionNo', 'class', 'rollNo'];
 const LOCAL_STORAGE_REPORT_COLS_KEY = 'school_student_report_selected_columns';
+const DEFAULT_STUDENT_TABLE_COLUMNS = ['name', 'admissionNo', 'class', 'category', 'village', 'aadharNo', 'samagraId', 'apaarId', 'panNo'];
+const LOCAL_STORAGE_STUDENT_TABLE_COLS_KEY = 'school_student_table_selected_columns';
 
 const createDefaultStudentForm = () => ({
   name: '',
@@ -181,6 +295,9 @@ const createDefaultStudentForm = () => ({
   admissionNo: '',
   class: '',
   academicYear: '',
+  admissionType: 'new' as 'new' | 'old',
+  feeCategory: 'REGULAR' as 'REGULAR' | 'RTE' | 'STAFF_CHILD' | 'SCHOLARSHIP' | 'OTHER',
+  concessions: [] as any[],
   rollNo: '',
   fatherName: '',
   motherName: '',
@@ -221,7 +338,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
-  const [fees, setFees] = useState<FeeSummary | null>(null);
+  const [fees, setFees] = useState<FeeSummaryStats | null>(null);
   const [distribution, setDistribution] = useState<Record<string, number> | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
@@ -257,13 +374,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     name: string;
     className: string;
     academicYear?: string;
+    admissionType?: string;
     category?: string;
+    feeCategory?: string;
     village?: string;
     dueAmount: number;
     totalFee: number;
     paidAmount: number;
     status: 'Partial' | 'Paid' | 'Pending';
     admissionNo: string;
+    feeSnapshot?: FinancialHistoryEntry['feeSnapshot'];
     paymentHistory: { date: string; amount: number; receiptNo?: string; academicYear?: string }[];
   }[]>([]);
 
@@ -272,15 +392,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     name: string;
     className: string;
     academicYear?: string;
+    admissionType?: string;
     category?: string;
+    feeCategory?: string;
     village?: string;
     dueAmount: number;
     totalFee: number;
     paidAmount: number;
     status: 'Partial' | 'Paid' | 'Pending';
     admissionNo: string;
+    feeSnapshot?: FinancialHistoryEntry['feeSnapshot'];
     paymentHistory: { date: string; amount: number; receiptNo?: string; academicYear?: string }[];
   } | null>(null);
+  const [selectedFeeDetail, setSelectedFeeDetail] = useState<FinancialHistoryEntry | null>(null);
+  const [selectedFeeDetailLoading, setSelectedFeeDetailLoading] = useState(false);
+  const [selectedFeeDetailError, setSelectedFeeDetailError] = useState('');
   const [studentFinancialHistory, setStudentFinancialHistory] = useState<FinancialHistoryEntry[]>([]);
   const [selectedFinancialYear, setSelectedFinancialYear] = useState<string>('');
   const [studentFinancialHistoryLoading, setStudentFinancialHistoryLoading] = useState(false);
@@ -290,7 +416,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [feeClassFilter, setFeeClassFilter] = useState('All');
   const [feeStatusFilter, setFeeStatusFilter] = useState('All');
   const [feeAcademicYearFilter, setFeeAcademicYearFilter] = useState('');
+  const [feeAdmissionTypeFilter, setFeeAdmissionTypeFilter] = useState('All');
+  const [feeCategoryFilter, setFeeCategoryFilter] = useState('All');
   const [studentAcademicYearFilter, setStudentAcademicYearFilter] = useState('');
+  const [studentAdmissionTypeFilter, setStudentAdmissionTypeFilter] = useState('All');
+  const [studentFeeCategoryFilter, setStudentFeeCategoryFilter] = useState('All');
   const [studentClassFilter, setStudentClassFilter] = useState('All');
   const [studentSectionFilter, setStudentSectionFilter] = useState('All');
   const [studentSearchQuery, setStudentSearchQuery] = useState('');
@@ -307,6 +437,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       name: s.name,
       className: s.class || s.className || 'General',
       academicYear: s.academicYear || '',
+      admissionType: s.admissionType || 'new',
+      feeCategory: s.feeCategory || 'REGULAR',
       dueAmount: s.dueAmount != null ? s.dueAmount : 0,
       totalFee: s.totalFee != null ? s.totalFee : 0,
       paidAmount: s.paidAmount != null ? s.paidAmount : 0,
@@ -314,6 +446,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       admissionNo: s.admissionNo || '',
       category: s.category || 'General',
       village: s.address?.village || '',
+      feeSnapshot: s.feeSnapshot || null,
       paymentHistory: Array.isArray(s.paymentHistory) ? s.paymentHistory.map((ph: any) => ({
         date: ph.date || '',
         amount: ph.amount != null ? ph.amount : 0,
@@ -405,6 +538,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   // Authentication Context
   const { user: currentUser } = useAuth();
+  const isAdminUser = currentUser?.role === 'admin';
 
   // Custom Student Report States
   const [isStudentReportModalOpen, setIsStudentReportModalOpen] = useState(false);
@@ -414,13 +548,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     const stored = localStorage.getItem(LOCAL_STORAGE_REPORT_COLS_KEY);
     if (stored) {
       try {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) ? parsed : DEFAULT_REPORT_COLUMNS;
       } catch (e) {
         return DEFAULT_REPORT_COLUMNS;
       }
     }
     return DEFAULT_REPORT_COLUMNS;
   });
+  const [isStudentTableColumnsModalOpen, setIsStudentTableColumnsModalOpen] = useState(false);
+  const [studentTableColumns, setStudentTableColumns] = useState<string[]>(() => {
+    const stored = localStorage.getItem(LOCAL_STORAGE_STUDENT_TABLE_COLS_KEY);
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        return Array.isArray(parsed) ? parsed : DEFAULT_STUDENT_TABLE_COLUMNS;
+      } catch (e) {
+        return DEFAULT_STUDENT_TABLE_COLUMNS;
+      }
+    }
+    return DEFAULT_STUDENT_TABLE_COLUMNS;
+  });
+  const [studentTableTransports, setStudentTableTransports] = useState<any[]>([]);
 
   // EDIT STATE HOLDERS
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
@@ -463,6 +612,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isStudentFormErrorModalOpen, setIsStudentFormErrorModalOpen] = useState(false);
   const [studentFormErrorTitle, setStudentFormErrorTitle] = useState('');
   const [studentFormErrorMessages, setStudentFormErrorMessages] = useState<string[]>([]);
+  const [manualConcessionDraft, setManualConcessionDraft] = useState({
+    type: 'STAFF_WARD' as 'SIBLING' | 'STAFF_WARD' | 'SCHOLARSHIP' | 'OTHER',
+    discountType: 'percentage' as 'percentage' | 'flat' | 'full_waiver',
+    value: '0',
+    appliesTo: ['all'] as string[],
+    academicYear: '',
+    remarks: ''
+  });
 
   // Form Field States
   const [studentForm, setStudentForm] = useState(createDefaultStudentForm());
@@ -538,6 +695,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           limit: number;
           status: string;
           academicYear?: string;
+          admissionType?: string;
+          feeCategory?: string;
         } = {
           limit: 1000,
           status: feeStatusFilter
@@ -545,6 +704,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
         if (academicYears.length > 0 && feeAcademicYearFilter) {
           feeLedgerParams.academicYear = feeAcademicYearFilter;
+        }
+
+        if (feeAdmissionTypeFilter !== 'All') {
+          feeLedgerParams.admissionType = feeAdmissionTypeFilter;
+        }
+
+        if (feeCategoryFilter !== 'All') {
+          feeLedgerParams.feeCategory = feeCategoryFilter;
         }
 
         const feeLedgerRes = await feeApi.getFeeLedger(feeLedgerParams);
@@ -570,7 +737,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     };
 
     loadFeeLedger();
-  }, [academicYears.length, feeStatusFilter, feeAcademicYearFilter, refreshTrigger, mapFeeLedgerRecords]);
+  }, [academicYears.length, feeStatusFilter, feeAcademicYearFilter, feeAdmissionTypeFilter, feeCategoryFilter, refreshTrigger, mapFeeLedgerRecords]);
 
   useEffect(() => {
     if (!academicYears.length) {
@@ -691,9 +858,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         setStudentFinancialHistory([]);
         setSelectedFinancialYear('');
         setStudentFinancialHistoryError('');
+        setSelectedFeeDetail(null);
+        setSelectedFeeDetailError('');
+        setSelectedFeeDetailLoading(false);
         return;
       }
 
+      setSelectedFinancialYear(selectedFeeStudent.academicYear || '');
       setStudentFinancialHistoryLoading(true);
       setStudentFinancialHistoryError('');
 
@@ -705,7 +876,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             return current;
           }
 
-          return history[0]?.academicYear || selectedFeeStudent.academicYear || '';
+          return selectedFeeStudent.academicYear || history[0]?.academicYear || '';
         });
       } catch (error) {
         console.error('Failed to load student financial history:', error);
@@ -720,6 +891,86 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     fetchStudentFinancialHistory();
   }, [selectedFeeStudent?.id, selectedFeeStudent?.academicYear, refreshTrigger]);
 
+  useEffect(() => {
+    const loadSelectedFeeDetail = async () => {
+      if (!selectedFeeStudent?.id) {
+        setSelectedFeeDetail(null);
+        setSelectedFeeDetailError('');
+        setSelectedFeeDetailLoading(false);
+        return;
+      }
+
+      const academicYear = selectedFinancialYear || selectedFeeStudent.academicYear || '';
+      if (!academicYear) {
+        setSelectedFeeDetail(null);
+        setSelectedFeeDetailError('');
+        setSelectedFeeDetailLoading(false);
+        return;
+      }
+
+      setSelectedFeeDetailLoading(true);
+      setSelectedFeeDetailError('');
+
+      try {
+        const detail = await feeApi.getStudentFeeDetails(selectedFeeStudent.id, academicYear);
+        const normalizedDetail: FinancialHistoryEntry = {
+          academicYear: detail?.academicYear || academicYear,
+          className: detail?.className || selectedFeeStudent.className,
+          section: detail?.section || '',
+          admissionType: detail?.admissionType || selectedFeeStudent.admissionType || 'new',
+          feeCategory: detail?.feeCategory || selectedFeeStudent.feeCategory || 'REGULAR',
+          totalFee: Number(detail?.totalFee ?? 0),
+          paidAmount: Number(detail?.paidAmount ?? 0),
+          dueAmount: Number(detail?.dueAmount ?? 0),
+          status: detail?.status || 'Pending',
+          feeSnapshot: detail?.feeSnapshot || null,
+          installments: Array.isArray(detail?.installments) ? detail.installments : [],
+          payments: Array.isArray(detail?.payments)
+            ? detail.payments.map((payment: any) => ({
+                id: payment.id || payment._id || payment.receiptNo,
+                receiptNo: payment.receiptNo || '',
+                paymentDate: payment.paymentDate || payment.date || '',
+                amount: Number(payment.amount ?? payment.paidAmount ?? 0),
+                paidAmount: Number(payment.paidAmount ?? payment.amount ?? 0),
+                dueAmount: Number(payment.dueAmount ?? 0),
+                paymentMethod: payment.paymentMethod || 'Cash',
+                month: payment.month || '',
+                className: payment.className || selectedFeeStudent.className || '',
+                section: payment.section || '',
+                admissionNo: payment.admissionNo || selectedFeeStudent.admissionNo || '',
+                studentName: payment.studentName || selectedFeeStudent.name || '',
+                feeSnapshot: payment.feeSnapshot || null
+              }))
+            : [],
+          receipts: Array.isArray(detail?.payments)
+            ? detail.payments.map((payment: any) => ({
+                receiptNo: payment.receiptNo || '',
+                paymentDate: payment.paymentDate || payment.date || '',
+                amount: Number(payment.amount ?? payment.paidAmount ?? 0),
+                paymentMethod: payment.paymentMethod || 'Cash',
+                className: payment.className || selectedFeeStudent.className || '',
+                section: payment.section || '',
+                academicYear: payment.academicYear || academicYear,
+                admissionNo: payment.admissionNo || selectedFeeStudent.admissionNo || '',
+                studentName: payment.studentName || selectedFeeStudent.name || '',
+                feeSnapshot: payment.feeSnapshot || null
+              }))
+            : []
+        };
+
+        setSelectedFeeDetail(normalizedDetail);
+      } catch (error) {
+        console.error('Failed to load selected fee detail:', error);
+        setSelectedFeeDetail(null);
+        setSelectedFeeDetailError('Failed to load fee details');
+      } finally {
+        setSelectedFeeDetailLoading(false);
+      }
+    };
+
+    loadSelectedFeeDetail();
+  }, [selectedFeeStudent?.id, selectedFinancialYear, selectedFeeStudent?.academicYear, selectedFeeStudent?.className, selectedFeeStudent?.feeCategory, selectedFeeStudent?.name, selectedFeeStudent?.admissionNo, refreshTrigger]);
+
   // --- PAGINATED STUDENT DIRECTORY LOADER ---
   const loadStudents = useCallback(async () => {
     try {
@@ -731,6 +982,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         class: studentClassFilter,
         section: studentSectionFilter,
         academicYear: studentAcademicYearFilter,
+        admissionType: studentAdmissionTypeFilter,
+        feeCategory: studentFeeCategoryFilter,
         sortBy,
         order,
         search: studentSearchQuery.trim()
@@ -751,7 +1004,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     } catch (err) {
       console.error('Error loading paginated students:', err);
     }
-  }, [page, limit, categoryFilter, villageFilter, studentClassFilter, studentSectionFilter, studentAcademicYearFilter, sortBy, order, studentSearchQuery]);
+  }, [page, limit, categoryFilter, villageFilter, studentClassFilter, studentSectionFilter, studentAcademicYearFilter, studentAdmissionTypeFilter, studentFeeCategoryFilter, sortBy, order, studentSearchQuery]);
 
   useEffect(() => {
     loadStudents();
@@ -772,7 +1025,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   useEffect(() => {
     setPage(1);
-  }, [studentSearchQuery, categoryFilter, villageFilter, studentClassFilter, studentSectionFilter, studentAcademicYearFilter]);
+  }, [studentSearchQuery, categoryFilter, villageFilter, studentClassFilter, studentSectionFilter, studentAcademicYearFilter, studentAdmissionTypeFilter, studentFeeCategoryFilter]);
 
   const triggerDataRefresh = () => {
     setRefreshTrigger(prev => prev + 1);
@@ -790,19 +1043,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     return studentFinancialHistory[0] || null;
   }, [selectedFinancialYear, studentFinancialHistory]);
 
+  const selectedFeeLedgerAdmissionType = useMemo(
+    () => selectedFeeDetail?.admissionType || activeFinancialEntry?.admissionType || selectedFeeStudent?.admissionType || 'new',
+    [activeFinancialEntry, selectedFeeDetail, selectedFeeStudent]
+  );
+
   const paymentLedgerEntry = useMemo(() => {
     if (!selectedFeeStudent) return null;
 
+    const selectedDetail = selectedFeeDetail || activeFinancialEntry;
+
     return {
       ...selectedFeeStudent,
-      academicYear: activeFinancialEntry?.academicYear || selectedFeeStudent.academicYear || '',
-      className: activeFinancialEntry?.className || selectedFeeStudent.className,
-      totalFee: activeFinancialEntry?.totalFee ?? selectedFeeStudent.totalFee ?? 0,
-      paidAmount: activeFinancialEntry?.paidAmount ?? selectedFeeStudent.paidAmount ?? 0,
-      dueAmount: activeFinancialEntry?.dueAmount ?? selectedFeeStudent.dueAmount ?? 0,
-      status: activeFinancialEntry?.status || selectedFeeStudent.status
+      academicYear: selectedDetail?.academicYear || selectedFeeStudent.academicYear || '',
+      className: selectedDetail?.className || selectedFeeStudent.className,
+      totalFee: selectedDetail?.totalFee ?? selectedFeeStudent.totalFee ?? 0,
+      paidAmount: selectedDetail?.paidAmount ?? selectedFeeStudent.paidAmount ?? 0,
+      dueAmount: selectedDetail?.dueAmount ?? selectedFeeStudent.dueAmount ?? 0,
+      status: selectedDetail?.status || selectedFeeStudent.status
     };
-  }, [activeFinancialEntry, selectedFeeStudent]);
+  }, [activeFinancialEntry, selectedFeeDetail, selectedFeeStudent]);
 
   const visibleFeeRecords = useMemo(() => {
     const searchTerm = feeSearchQuery.trim().toLowerCase();
@@ -845,12 +1105,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         })();
 
       const matchesStatus = feeStatusFilter === 'All' || record.status === feeStatusFilter;
+      const matchesAdmissionType =
+        feeAdmissionTypeFilter === 'All' ||
+        String(record.admissionType || 'new') === feeAdmissionTypeFilter;
+      const matchesFeeCategory =
+        feeCategoryFilter === 'All' ||
+        String(record.feeCategory || 'REGULAR').trim().toUpperCase() === feeCategoryFilter;
       const matchesAcademicYear =
         feeAcademicYearFilter === 'All' || (record.academicYear || '') === feeAcademicYearFilter;
 
-      return matchesSearch && matchesClass && matchesStatus && matchesAcademicYear;
+      return matchesSearch && matchesClass && matchesStatus && matchesAdmissionType && matchesFeeCategory && matchesAcademicYear;
     });
-  }, [feeAcademicYearFilter, feeClassFilter, feeRecords, feeSearchQuery, feeStatusFilter]);
+  }, [feeAcademicYearFilter, feeAdmissionTypeFilter, feeCategoryFilter, feeClassFilter, feeRecords, feeSearchQuery, feeStatusFilter]);
 
   const studentFinancialTimeline = useMemo(
     () =>
@@ -954,6 +1220,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       admissionNo: stu.admissionNo || stu.rollNumber || '',
       class: stu.class || '',
       academicYear: stu.academicYear || preferredAcademicYearLabel,
+      admissionType: stu.admissionType || 'new',
+      feeCategory: stu.feeCategory || 'REGULAR',
+      concessions: Array.isArray(stu.concessions) ? stu.concessions : [],
       rollNo: String(stu.rollNo || ''),
       fatherName: stu.fatherName || stu.parentName || '',
       motherName: stu.motherName || '',
@@ -998,6 +1267,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       contact: t.contact
     });
     setIsTeacherModalOpen(true);
+  };
+
+  const handleManualConcessionAdd = () => {
+    if (!isAdminUser) {
+      return;
+    }
+
+    const academicYearValue = manualConcessionDraft.academicYear || studentForm.academicYear || preferredAcademicYearLabel;
+    const nextConcession = {
+      type: manualConcessionDraft.type,
+      discountType: manualConcessionDraft.discountType,
+      value: Number(manualConcessionDraft.value) || 0,
+      appliesTo: manualConcessionDraft.appliesTo.length ? manualConcessionDraft.appliesTo : ['all'],
+      academicYear: academicYearValue,
+      remarks: manualConcessionDraft.remarks,
+      createdBy: currentUser?.id || '',
+      createdAt: new Date().toISOString(),
+      autoManaged: false
+    };
+
+    setStudentForm((current) => ({
+      ...current,
+      concessions: [...(Array.isArray(current.concessions) ? current.concessions : []), nextConcession]
+    }));
+    setManualConcessionDraft({
+      type: 'STAFF_WARD',
+      discountType: 'percentage',
+      value: '0',
+      appliesTo: ['all'],
+      academicYear: academicYearValue,
+      remarks: ''
+    });
+  };
+
+  const handleRemoveConcession = (index: number) => {
+    setStudentForm((current) => ({
+      ...current,
+      concessions: (Array.isArray(current.concessions) ? current.concessions : []).filter((_: any, idx: number) => idx !== index)
+    }));
   };
 
   const handlePrepareDeleteStudent = (stu: Student) => {
@@ -1120,7 +1428,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         savedStudent = await studentApi.updateStudent(editingStudentId, studentForm as any);
         setEditingStudentId(null);
       } else {
-        savedStudent = await studentApi.addStudent(studentForm as any);
+        savedStudent = await studentApi.addStudent({
+          ...studentForm
+        } as any);
       }
       setIsStudentModalOpen(false);
       const studentIdForTransport = savedStudent?.id || savedStudent?._id;
@@ -1336,41 +1646,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleExportStudentsExcel = () => {
-    const headers = [
-      'ID', 'Name', 'Email', 'Admission No', 'Class', 'Roll No', 
-      'Gender', 'Date of Birth', 'Joining Date', 'Category', 'Phone', 
-      'Father Name', 'Mother Name', 'Aadhaar No', 'Samagra ID', 'APAAR ID', 'PAN No',
-      'Village', 'Post Office', 'Tehsil', 'District', 'State', 'Pincode',
-      'Account Holder Name', 'Bank Name', 'Account Number', 'IFSC Code', 'Branch Name'
-    ];
-    const keys = [
-      'id', 'name', 'email', 'admissionNo', 'class', 'rollNo',
-      'gender', 'dateOfBirth', 'joiningDate', 'category', 'phone',
-      'fatherName', 'motherName', 'aadharNo', 'samagraId', 'apaarId', 'panNo',
-      'village', 'postOffice', 'tehsil', 'district', 'state', 'pincode',
-      'bankAccountHolderName', 'bankName', 'bankAccountNumber', 'bankIfscCode', 'bankBranchName'
-    ];
-    const dataToExport = filteredStudents.map(student => ({
-      ...student,
-      dateOfBirth: formatDate(student.dateOfBirth),
-      joiningDate: formatDate(student.joiningDate),
-      admissionNo: student.admissionNo || student.rollNumber || '',
-      class: student.class || 'Nursery',
-      rollNo: student.rollNo || '',
-      phone: student.phone || student.contact || '',
-      fatherName: student.fatherName || student.parentName || '',
-      village: student.address?.village || '',
-      postOffice: student.address?.postOffice || '',
-      tehsil: student.address?.tehsil || '',
-      district: student.address?.district || '',
-      state: student.address?.state || '',
-      pincode: student.address?.pincode || '',
-      bankAccountHolderName: student.bankDetails?.accountHolderName || '',
-      bankName: student.bankDetails?.bankName || '',
-      bankAccountNumber: student.bankDetails?.accountNumber || '',
-      bankIfscCode: student.bankDetails?.ifscCode || '',
-      bankBranchName: student.bankDetails?.branchName || ''
+    const exportColumns = REPORT_COLUMNS.filter((col) => studentTableColumns.includes(col.id));
+
+    if (!exportColumns.length) {
+      alert('Please select at least one column before exporting the student roster.');
+      return;
+    }
+
+    const headers = exportColumns.map((col) => col.label);
+    const keys = exportColumns.map((col) => col.id);
+    const dataToExport = filteredStudents.map((student) => ({
+      id: student.id,
+      ...exportColumns.reduce<Record<string, string>>((acc, col) => {
+        acc[col.id] = getColumnValue(student, col.id, studentTableTransports);
+        return acc;
+      }, {})
     }));
+
     exportToExcel(dataToExport, headers, keys, `Students_Roster_${new Date().toISOString().split('T')[0]}`);
   };
 
@@ -1413,6 +1705,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       default: return '';
     }
   };
+
+  useEffect(() => {
+    if (!studentTableColumns.includes('usesTransport')) {
+      setStudentTableTransports([]);
+      return;
+    }
+
+    let cancelled = false;
+    const loadTransportRoster = async () => {
+      try {
+        const transportsList = await transportApi.getStudents();
+        if (!cancelled) {
+          setStudentTableTransports(transportsList);
+        }
+      } catch (err) {
+        console.warn('Could not load transport roster for student table columns', err);
+        if (!cancelled) {
+          setStudentTableTransports([]);
+        }
+      }
+    };
+
+    void loadTransportRoster();
+    return () => {
+      cancelled = true;
+    };
+  }, [studentTableColumns]);
 
   const handleExportStudentsPDF = () => {
     setIsStudentReportModalOpen(true);
@@ -1944,18 +2263,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   };
 
   const handleExportFeesExcel = () => {
-    const headers = ['ID', 'Student Name', 'Admission No', 'Class Name', 'Academic Year', 'Total Billable Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
-    const keys = ['id', 'name', 'admissionNo', 'className', 'academicYear', 'totalFee', 'paidAmount', 'dueAmount', 'status'];
-    exportToExcel(visibleFeeRecords, headers, keys, `Fees_Ledger_${new Date().toISOString().split('T')[0]}`);
+    const exportRows = visibleFeeRecords.map((item) => ({
+      ...item,
+      concessionsSummary: formatConcessionSummary(item.feeSnapshot).join('\n') || 'No concessions applied'
+    }));
+    const headers = ['ID', 'Student Name', 'Admission No', 'Class Name', 'Academic Year', 'Concessions Applied', 'Total Billable Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
+    const keys = ['id', 'name', 'admissionNo', 'className', 'academicYear', 'concessionsSummary', 'totalFee', 'paidAmount', 'dueAmount', 'status'];
+    exportToExcel(exportRows, headers, keys, `Fees_Ledger_${new Date().toISOString().split('T')[0]}`);
   };
 
   const handleExportFeesPDF = () => {
-    const headers = ['Student Name', 'Admission No', 'Class', 'Academic Year', 'Total Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
+    const headers = ['Student Name', 'Admission No', 'Class', 'Academic Year', 'Concessions Applied', 'Total Fee', 'Paid Fees', 'Left/Due Fees', 'Status'];
     const rows = visibleFeeRecords.map(item => [
       item.name || '',
       item.admissionNo || '',
       item.className || '',
       item.academicYear || '',
+      formatConcessionSummary(item.feeSnapshot).join('<br>') || 'No concessions applied',
       `₹${(item.totalFee ?? 0).toLocaleString()}`,
       `₹${(item.paidAmount ?? 0).toLocaleString()}`,
       `₹${(item.dueAmount ?? 0).toLocaleString()}`,
@@ -2100,11 +2424,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       categoryFilter === 'All' ||
       studentCategory === categoryFilter.toLowerCase();
 
+    const matchesFeeCategory =
+      studentFeeCategoryFilter === 'All' ||
+      String(stu.feeCategory || 'REGULAR').trim().toUpperCase() === studentFeeCategoryFilter;
+
     const matchesVillage =
       !villageFilter.trim() ||
       studentVillage.includes(villageFilter.trim().toLowerCase());
 
-    return matchesSearch && matchesClass && matchesCategory && matchesVillage;
+    return matchesSearch && matchesClass && matchesCategory && matchesFeeCategory && matchesVillage;
   });
 
   const filteredTeachers = (Array.isArray(teachers) ? teachers : []).filter(t => 
@@ -2407,6 +2735,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Admission Type:</span>
+                  <select
+                    value={studentAdmissionTypeFilter}
+                    onChange={(e) => setStudentAdmissionTypeFilter(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[110px]"
+                  >
+                    <option value="All">All</option>
+                    <option value="new">New</option>
+                    <option value="old">Old</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Fee Category:</span>
+                  <select
+                    value={studentFeeCategoryFilter}
+                    onChange={(e) => setStudentFeeCategoryFilter(e.target.value)}
+                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:border-slate-300 rounded-lg text-xs font-bold text-slate-700 focus:border-blue-500 cursor-pointer outline-none min-w-[130px]"
+                  >
+                    <option value="All">All</option>
+                    <option value="REGULAR">Regular</option>
+                    <option value="RTE">RTE</option>
+                    <option value="STAFF_CHILD">Staff Child</option>
+                    <option value="SCHOLARSHIP">Scholarship</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider select-none whitespace-nowrap">Category:</span>
                   <select
                     value={categoryFilter}
@@ -2461,6 +2818,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 Showing {filteredStudents.length} of {pagination?.totalStudents != null ? pagination.totalStudents : filteredStudents.length} students
               </span>
               <button
+                onClick={() => setIsStudentTableColumnsModalOpen(true)}
+                title="Choose visible columns for the student table"
+                className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-200 hover:border-slate-300 rounded-lg bg-white text-xs font-bold text-slate-600 hover:text-slate-800 transition-all select-none active:scale-95 cursor-pointer shadow-xs"
+              >
+                <Filter size={13} className="text-slate-500" />
+                Columns
+              </button>
+              <button
                 onClick={handleExportStudentsExcel}
                 title="Export list to Excel (.csv)"
                 className="inline-flex items-center gap-1 px-3 py-1.5 border border-slate-200 hover:border-slate-300 rounded-lg bg-white text-xs font-bold text-slate-600 hover:text-slate-800 transition-all select-none active:scale-95 cursor-pointer shadow-xs"
@@ -2483,55 +2848,109 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             <table className="w-full text-left text-xs text-slate-600 border-collapse">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100 font-bold text-slate-700 select-none">
-                  <th className="p-4 px-6">Student Name</th>
-                  <th className="p-4">Admission No</th>
-                  <th className="p-4">Class</th>
-                  <th className="p-4">Category</th>
-                  <th className="p-4">Village</th>
-                  <th className="p-4">Aadhaar No</th>
-                  <th className="p-4">Samagra ID</th>
-                  <th className="p-4">APAAR ID</th>
-                  <th className="p-4">PAN No</th>
+                  {(REPORT_COLUMNS.filter((col) => studentTableColumns.includes(col.id))).map((col) => (
+                    <th key={col.id} className={`p-4 ${col.id === 'name' ? 'px-6' : ''}`}>
+                      {col.label}
+                    </th>
+                  ))}
                   <th className="p-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium">
                 {filteredStudents.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="text-center py-8 text-slate-400">
+                    <td
+                      colSpan={Math.max(1, REPORT_COLUMNS.filter((col) => studentTableColumns.includes(col.id)).length + 1)}
+                      className="text-center py-8 text-slate-400"
+                    >
                       No matching student catalogs detected.
+                    </td>
+                  </tr>
+                ) : REPORT_COLUMNS.filter((col) => studentTableColumns.includes(col.id)).length === 0 ? (
+                  <tr>
+                    <td colSpan={1} className="text-center py-8 text-slate-400">
+                      No table columns selected. Open Columns and choose at least one field to display.
                     </td>
                   </tr>
                 ) : (
                   filteredStudents.map((stu) => (
                     <tr key={stu.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="p-4 px-6">
-                        <div>
-                          <p className="font-extrabold text-slate-900">{stu.name}</p>
-                          <p className="text-[10px] text-slate-400 font-bold">{stu.email}</p>
-                        </div>
-                      </td>
-                      <td className="p-4 font-mono font-bold text-slate-500">
-                        {stu.admissionNo || stu.rollNumber || 'N/A'}
-                      </td>
-                      <td className="p-4">
-                        <Badge 
-                          variant={
-                            stu.classCategory === 'Secondary' ? 'info' :
-                            stu.classCategory === 'Primary' ? 'success' :
-                            stu.classCategory === 'Middle School' ? 'warning' : 'primary'
-                          } 
-                          size="sm"
-                        >
-                          {stu.class || stu.classCategory || 'N/A'}
-                        </Badge>
-                      </td>
-                      <td className="p-4 font-bold text-slate-700">{stu.category || 'General'}</td>
-                      <td className="p-4 font-semibold text-slate-600">{stu.address?.village || 'N/A'}</td>
-                      <td className="p-4 font-mono text-slate-600">{stu.aadharNo || 'N/A'}</td>
-                      <td className="p-4 font-mono text-slate-600">{stu.samagraId || 'N/A'}</td>
-                      <td className="p-4 font-mono text-slate-600">{stu.apaarId || 'N/A'}</td>
-                      <td className="p-4 font-mono text-slate-600">{stu.panNo || 'N/A'}</td>
+                      {REPORT_COLUMNS.filter((col) => studentTableColumns.includes(col.id)).map((col) => {
+                        const value = getColumnValue(stu, col.id, studentTableTransports) || 'N/A';
+
+                        if (col.id === 'name') {
+                          return (
+                            <td key={col.id} className="p-4 px-6 min-w-[170px]">
+                              <div className="space-y-1">
+                                <p className="font-extrabold text-slate-900">{stu.name}</p>
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <Badge variant={getAdmissionTypeBadgeVariant(stu.admissionType)} size="xs">
+                                    {formatAdmissionTypeLabel(stu.admissionType)}
+                                  </Badge>
+                                  {stu.feeCategory && String(stu.feeCategory).toUpperCase() !== 'REGULAR' && (
+                                    <Badge variant={String(stu.feeCategory).toUpperCase() === 'RTE' ? 'danger' : 'info'} size="xs">
+                                      {formatFeeCategoryLabel(stu.feeCategory)}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <p className="text-[10px] text-slate-400 font-bold">{stu.email}</p>
+                              </div>
+                            </td>
+                          );
+                        }
+
+                        if (col.id === 'class') {
+                          return (
+                            <td key={col.id} className="p-4 min-w-[110px]">
+                              <Badge
+                                variant={
+                                  stu.classCategory === 'Secondary' ? 'info' :
+                                  stu.classCategory === 'Primary' ? 'success' :
+                                  stu.classCategory === 'Middle School' ? 'warning' : 'primary'
+                                }
+                                size="sm"
+                              >
+                                {value}
+                              </Badge>
+                            </td>
+                          );
+                        }
+
+                        if (col.id === 'status') {
+                          return (
+                            <td key={col.id} className="p-4 font-bold text-slate-700 min-w-[100px]">
+                              <Badge
+                                variant={
+                                  stu.status === 'Paid' ? 'success' :
+                                  stu.status === 'Partial' ? 'warning' : 'danger'
+                                }
+                                size="sm"
+                              >
+                                {value}
+                              </Badge>
+                            </td>
+                          );
+                        }
+
+                        if (col.id === 'usesTransport') {
+                          return (
+                            <td key={col.id} className="p-4 font-semibold text-slate-600 min-w-[120px]">
+                              <Badge variant={value === 'Yes' ? 'success' : 'slate'} size="sm">
+                                {value}
+                              </Badge>
+                            </td>
+                          );
+                        }
+
+                        return (
+                          <td
+                            key={col.id}
+                            className={`p-4 ${col.id === 'admissionNo' || col.id === 'rollNo' || col.id.includes('bank') ? 'font-mono' : 'font-semibold'} text-slate-600 min-w-[120px]`}
+                          >
+                            {value}
+                          </td>
+                        );
+                      })}
                       <td className="p-4 text-right">
                         <div className="flex items-center justify-end gap-1">
                           <button
@@ -2771,7 +3190,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         // Complete the payment flow
   const handleSavePaymentSubmit = async (e: React.FormEvent) => {
           e.preventDefault();
-          const amountFloat = parseFloat(customPayAmount);
+        const amountFloat = parseFloat(customPayAmount);
+          const paymentYearRecord = paymentLedgerEntry || activeFinancialEntry || null;
+          const paymentAcademicYear = paymentYearRecord?.academicYear || activeRecord.academicYear || '';
+          const paymentFeeCategory = paymentYearRecord?.feeCategory || activeRecord?.feeCategory;
+          const paymentTotalFee = paymentYearRecord?.totalFee ?? activeRecord?.totalFee ?? 0;
+          if (isRteWaivedFee(paymentFeeCategory, paymentYearRecord?.feeSnapshot, paymentTotalFee)) {
+            alert('No fee due - RTE waiver.');
+            return;
+          }
+
           if (isNaN(amountFloat) || amountFloat <= 0) {
             alert('Please specify a valid payment amount.');
             return;
@@ -2784,8 +3212,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
           setSubmitLoading(true);
           try {
-            const paymentYearRecord = activeFinancialEntry || null;
-            const paymentAcademicYear = paymentYearRecord?.academicYear || activeRecord.academicYear || '';
             const paymentClassName = paymentYearRecord?.className || activeRecord.className;
             const apiRes = await studentApi.collectFee({
               studentId: activeRecord.id,
@@ -2966,6 +3392,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </select>
                 </div>
 
+                <div className="relative w-full sm:w-44">
+                  <select
+                    value={feeAdmissionTypeFilter}
+                    onChange={(e) => setFeeAdmissionTypeFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer focus:bg-white focus:border-blue-500 text-slate-700"
+                  >
+                    <option value="All">Admission: All</option>
+                    <option value="new">New</option>
+                    <option value="old">Old</option>
+                  </select>
+                </div>
+
+                <div className="relative w-full sm:w-48">
+                  <select
+                    value={feeCategoryFilter}
+                    onChange={(e) => setFeeCategoryFilter(e.target.value)}
+                    className="w-full text-xs font-bold px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg outline-none cursor-pointer focus:bg-white focus:border-blue-500 text-slate-700"
+                  >
+                    <option value="All">Fee Category: All</option>
+                    <option value="REGULAR">Regular</option>
+                    <option value="RTE">RTE</option>
+                    <option value="STAFF_CHILD">Staff Child</option>
+                    <option value="SCHOLARSHIP">Scholarship</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+
                 <div className="relative w-full sm:w-52">
                   <select
                     value={feeAcademicYearFilter}
@@ -3045,6 +3498,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                     item.status === 'Partial' ? 'bg-amber-500' : 'bg-red-500'
                                   }`} />
                                   <span className="font-extrabold">{item.name}</span>
+                                  {item.feeCategory && String(item.feeCategory).toUpperCase() !== 'REGULAR' && (
+                                    <Badge variant={String(item.feeCategory).toUpperCase() === 'RTE' ? 'danger' : 'info'} size="xs">
+                                      {formatFeeCategoryLabel(item.feeCategory)}
+                                    </Badge>
+                                  )}
                                 </div>
                               </td>
                               <td className="p-3.5 text-slate-500 font-semibold">{item.className}</td>
@@ -3075,15 +3533,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   <div className="p-5 border-b border-slate-100 bg-gradient-to-br from-slate-50 to-white">
                     <p className="text-[10px] uppercase tracking-[0.3em] font-black text-slate-400">Selected Student Ledger</p>
                     <div className="flex items-start justify-between gap-3 mt-2">
-                      <div className="min-w-0">
-                        <h3 className="text-lg font-black text-slate-900 leading-tight truncate">{activeRecord.name}</h3>
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-lg font-black text-slate-900 leading-tight truncate">{activeRecord.name}</h3>
+                              <Badge variant={getAdmissionTypeBadgeVariant(selectedFeeLedgerAdmissionType)} size="xs">
+                                {formatAdmissionTypeLabel(selectedFeeLedgerAdmissionType)}
+                          </Badge>
+                          {activeRecord.feeCategory && String(activeRecord.feeCategory).toUpperCase() !== 'REGULAR' && (
+                            <Badge variant={String(activeRecord.feeCategory).toUpperCase() === 'RTE' ? 'danger' : 'info'} size="xs">
+                              {formatFeeCategoryLabel(activeRecord.feeCategory)}
+                            </Badge>
+                          )}
+                        </div>
                         <div className="flex flex-wrap gap-2 mt-2 text-[10px] font-bold text-slate-500">
                           <span className="px-2 py-1 rounded-full bg-white border border-slate-200">Adm {activeRecord.admissionNo}</span>
                           <span className="px-2 py-1 rounded-full bg-white border border-slate-200">
-                            {activeFinancialEntry?.className || activeRecord.className}
+                            {selectedFeeDetail?.className || activeFinancialEntry?.className || activeRecord.className}
                           </span>
                           <span className="px-2 py-1 rounded-full bg-white border border-slate-200">
-                            AY {activeFinancialEntry?.academicYear || activeRecord.academicYear || 'N/A'}
+                            AY {selectedFeeDetail?.academicYear || activeFinancialEntry?.academicYear || activeRecord.academicYear || 'N/A'}
                           </span>
                         </div>
                       </div>
@@ -3105,6 +3573,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                         </select>
                         <ChevronDown size={14} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       </div>
+                      {selectedFeeDetailLoading && (
+                        <p className="text-[10px] font-bold text-slate-400">Syncing fee summary...</p>
+                      )}
                     </div>
                   </div>
 
@@ -3126,21 +3597,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       <div className="p-5 rounded-2xl border border-dashed border-slate-200 bg-slate-50 text-xs font-semibold text-slate-500">
                         No archived financial years are available for this student.
                       </div>
+                    ) : selectedFeeDetailLoading && !selectedFeeDetail ? (
+                      <div className="space-y-3">
+                        <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4 text-xs font-semibold text-slate-500">
+                          Syncing fee summary...
+                        </div>
+                        <div className="h-44 rounded-2xl bg-slate-100 animate-pulse" />
+                      </div>
                     ) : (
                       <>
+                        {selectedFeeDetailError && (
+                          <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                            {selectedFeeDetailError}
+                          </div>
+                        )}
                         {(() => {
                           const selectedYearEntry =
+                            selectedFeeDetail ||
                             activeFinancialEntry ||
                             studentFinancialTimeline.find((entry) => entry.academicYear === (selectedFinancialYear || activeRecord.academicYear)) ||
                             studentFinancialTimeline[0] ||
                             null;
-                          const totalFee = selectedYearEntry?.totalFee ?? activeRecord.totalFee ?? 0;
+                          const feeSnapshot = selectedYearEntry?.feeSnapshot || null;
+                          const displayAdmissionType = selectedYearEntry?.admissionType || activeRecord.admissionType || 'new';
+                          const totalFee = Number(selectedYearEntry?.totalFee ?? feeSnapshot?.finalAmount ?? activeRecord.totalFee ?? 0);
                           const paidAmount = selectedYearEntry?.paidAmount ?? activeRecord.paidAmount ?? 0;
-                          const dueAmount = selectedYearEntry?.dueAmount ?? activeRecord.dueAmount ?? 0;
+                          const dueAmount = Number(selectedYearEntry?.dueAmount ?? activeRecord.dueAmount ?? Math.max(0, totalFee - paidAmount));
                           const status = selectedYearEntry?.status || activeRecord.status;
                           const className = selectedYearEntry?.className || activeRecord.className;
+                          const feeCategory = selectedYearEntry?.feeCategory || activeRecord.feeCategory;
                           const matchingFS = getMatchingStructureForClass(className, selectedYearEntry?.academicYear || '');
-                          const inst = matchingFS ? getInstallmentStatuses(paidAmount, matchingFS) : {
+                          const installmentTargets = getScaledInstallmentAmounts(matchingFS, feeSnapshot, totalFee);
+                          const installmentBasis = installmentTargets || matchingFS;
+                          const inst = installmentBasis ? getInstallmentStatuses(paidAmount, installmentBasis) : {
                             junePaid: 0,
                             septemberPaid: 0,
                             decemberPaid: 0,
@@ -3150,6 +3639,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             decemberStatus: 'Pending',
                             marchStatus: 'Pending'
                           };
+                          const isRteWaived = isRteWaivedFee(feeCategory, feeSnapshot, totalFee);
+                          const concessionsApplied = formatConcessionSummary(feeSnapshot);
 
                           return (
                             <div className="space-y-5">
@@ -3176,6 +3667,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 </div>
                               </div>
 
+                              {concessionsApplied.length > 0 && (
+                                <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                                  <div className="flex items-center justify-between gap-3 mb-3">
+                                    <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Concessions applied</h4>
+                                    <span className="text-[10px] font-bold text-slate-400">{concessionsApplied.length} active</span>
+                                  </div>
+                                  <div className="space-y-2">
+                                    {concessionsApplied.map((line, index) => {
+                                      const splitAt = line.lastIndexOf(' -₹');
+                                      const label = splitAt >= 0 ? line.slice(0, splitAt) : line;
+                                      const amount = splitAt >= 0 ? line.slice(splitAt + 1) : '';
+                                      return (
+                                        <div key={`${label}-${index}`} className="flex items-center justify-between gap-3 text-xs font-semibold">
+                                          <span className="text-slate-700 break-words">{label}</span>
+                                          <span className="text-rose-600 shrink-0">{amount}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+
+                              {isRteWaived && (
+                                <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                                  RTE waiver applied. No fee is due for this academic year.
+                                </div>
+                              )}
+
                               <div className="space-y-3">
                                 <div className="flex items-center justify-between">
                                   <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400">Installment Plan</h4>
@@ -3188,10 +3707,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 )}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                   {[
-                                    ['June', matchingFS?.juneAmount || 0, inst.junePaid],
-                                    ['September', matchingFS?.septemberAmount || 0, inst.septemberPaid],
-                                    ['December', matchingFS?.decemberAmount || 0, inst.decemberPaid],
-                                    ['March', matchingFS?.marchAmount || 0, inst.marchPaid]
+                                    ['June', installmentTargets?.juneAmount ?? matchingFS?.juneAmount ?? 0, inst.junePaid],
+                                    ['September', installmentTargets?.septemberAmount ?? matchingFS?.septemberAmount ?? 0, inst.septemberPaid],
+                                    ['December', installmentTargets?.decemberAmount ?? matchingFS?.decemberAmount ?? 0, inst.decemberPaid],
+                                    ['March', installmentTargets?.marchAmount ?? matchingFS?.marchAmount ?? 0, inst.marchPaid]
                                   ].map(([label, target, paid]) => {
                                     const remaining = Math.max(0, Number(target) - Number(paid));
                                     const installmentStatus = Number(paid) >= Number(target) ? 'Paid' : Number(paid) > 0 ? 'Partial' : 'Pending';
@@ -3252,7 +3771,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               </div>
 
                               <div className="pt-1">
-                                {(dueAmount ?? 0) > 0 ? (
+                                {(dueAmount ?? 0) > 0 && !isRteWaived ? (
                                   <Button
                                     fullWidth
                                     onClick={() => handleOpenPayModal(activeRecord, selectedYearEntry)}
@@ -3260,6 +3779,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   >
                                     Collect Pending Fee
                                   </Button>
+                                ) : isRteWaived ? (
+                                  <div className="w-full rounded-xl border border-rose-200 bg-rose-50 py-3 text-center text-xs font-black text-rose-700">
+                                    No fee due - RTE waiver
+                                  </div>
                                 ) : (
                                   <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50 py-3 text-center text-xs font-black text-emerald-700">
                                     ✓ Academic Year Fully Paid
@@ -3571,14 +4094,21 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                 {(() => {
                   const paymentTarget = paymentLedgerEntry || activeRecord;
                   const paymentYear = selectedFinancialYear || paymentTarget?.academicYear || '';
-                  const selectedYearEntry =
+                          const selectedYearEntry =
+                    selectedFeeDetail ||
                     studentFinancialTimeline.find((entry) => entry.academicYear === paymentYear) ||
                     activeFinancialEntry ||
                     null;
-                  const dueAmount = selectedYearEntry?.dueAmount ?? paymentTarget?.dueAmount ?? 0;
-                  const paidAmount = selectedYearEntry?.paidAmount ?? paymentTarget?.paidAmount ?? 0;
-                  const totalFee = selectedYearEntry?.totalFee ?? paymentTarget?.totalFee ?? 0;
+                  const feeSnapshot = selectedYearEntry?.feeSnapshot || null;
+                  const dueAmount = Number(selectedYearEntry?.dueAmount ?? paymentTarget?.dueAmount ?? 0);
+                  const paidAmount = Number(selectedYearEntry?.paidAmount ?? paymentTarget?.paidAmount ?? 0);
+                  const totalFee = Number(selectedYearEntry?.totalFee ?? feeSnapshot?.finalAmount ?? paymentTarget?.totalFee ?? 0);
                   const selectedClassName = selectedYearEntry?.className || paymentTarget?.className || '';
+                  const feeCategory = selectedYearEntry?.feeCategory || paymentTarget?.feeCategory;
+                  const matchingFS = getMatchingStructureForClass(selectedClassName, paymentYear);
+                  const installmentTargets = getScaledInstallmentAmounts(matchingFS, feeSnapshot, totalFee);
+                  const installmentBasis = installmentTargets || matchingFS;
+                  const isRteWaived = isRteWaivedFee(feeCategory, feeSnapshot, totalFee);
                   if (!receiptDetail) {
                     return (
                       <form onSubmit={handleSavePaymentSubmit} className="space-y-4 animate-fadeIn">
@@ -3591,6 +4121,11 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                           <div className="mt-2 inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-500">
                             Academic Year: <span className="ml-1 text-slate-900">{paymentYear || 'N/A'}</span>
                           </div>
+                          {isRteWaived && (
+                            <div className="mt-2 inline-flex items-center rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-700">
+                              No fee due - RTE waiver
+                            </div>
+                          )}
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -3604,13 +4139,12 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                           </div>
                           <div className="rounded-2xl border border-red-100 bg-red-50 p-3">
                             <p className="text-[10px] font-black uppercase tracking-widest text-red-500">Due</p>
-                            <p className="mt-1 text-sm font-black text-red-700">₹{(dueAmount || 0).toLocaleString()}</p>
-                          </div>
+                          <p className="mt-1 text-sm font-black text-red-700">₹{(dueAmount || 0).toLocaleString()}</p>
+                        </div>
                         </div>
 
                         {(() => {
-                          const matchingFS = getMatchingStructureForClass(selectedClassName, paymentYear);
-                          const inst = matchingFS ? getInstallmentStatuses(paidAmount, matchingFS) : {
+                          const inst = installmentBasis ? getInstallmentStatuses(paidAmount, installmentBasis) : {
                             junePaid: 0,
                             septemberPaid: 0,
                             decemberPaid: 0,
@@ -3621,12 +4155,17 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                             marchStatus: 'Pending'
                           };
 
-                          const juneRemaining = Math.max(0, (matchingFS?.juneAmount || 0) - inst.junePaid);
-                          const septemberRemaining = Math.max(0, (matchingFS?.septemberAmount || 0) - inst.septemberPaid);
-                          const decemberRemaining = Math.max(0, (matchingFS?.decemberAmount || 0) - inst.decemberPaid);
-                          const marchRemaining = Math.max(0, (matchingFS?.marchAmount || 0) - inst.marchPaid);
+                          const juneAmount = installmentTargets?.juneAmount ?? matchingFS?.juneAmount ?? 0;
+                          const septemberAmount = installmentTargets?.septemberAmount ?? matchingFS?.septemberAmount ?? 0;
+                          const decemberAmount = installmentTargets?.decemberAmount ?? matchingFS?.decemberAmount ?? 0;
+                          const marchAmount = installmentTargets?.marchAmount ?? matchingFS?.marchAmount ?? 0;
 
-                          const hasDueInstallments = juneRemaining > 0 || septemberRemaining > 0 || decemberRemaining > 0 || marchRemaining > 0;
+                          const juneRemaining = Math.max(0, Number(juneAmount) - inst.junePaid);
+                          const septemberRemaining = Math.max(0, Number(septemberAmount) - inst.septemberPaid);
+                          const decemberRemaining = Math.max(0, Number(decemberAmount) - inst.decemberPaid);
+                          const marchRemaining = Math.max(0, Number(marchAmount) - inst.marchPaid);
+
+                          const hasDueInstallments = !isRteWaived && (juneRemaining > 0 || septemberRemaining > 0 || decemberRemaining > 0 || marchRemaining > 0);
                           if (!hasDueInstallments) return null;
 
                           return (
@@ -3701,6 +4240,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                             placeholder="Enter amount to pay"
                             max={dueAmount}
                             min="1"
+                            disabled={isRteWaived}
                             className="w-full text-xs font-bold px-3 py-2.5 border border-slate-200 rounded-lg outline-none focus:border-blue-500 transition-colors"
                           />
                         </div>
@@ -4289,7 +4829,7 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
 
           {/* Grouped Checkboxes Grid */}
           <div className="space-y-5">
-            {(['Basic Information', 'Personal Information', 'Parent Information', 'Government IDs', 'Address', 'Fee Information', 'Transport'] as const).map(category => {
+            {REPORT_COLUMN_CATEGORIES.map(category => {
               const categoryCols = REPORT_COLUMNS.filter(col => col.category === category);
               return (
                 <div key={category} className="space-y-2">
@@ -4332,6 +4872,99 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
         </div>
       </Modal>
 
+      {/* STUDENT TABLE COLUMN PICKER */}
+      <Modal
+        isOpen={isStudentTableColumnsModalOpen}
+        onClose={() => setIsStudentTableColumnsModalOpen(false)}
+        title="Choose Student Table Columns"
+        footer={
+          <div className="flex gap-2 w-full sm:w-auto justify-end">
+            <Button variant="outline" size="sm" onClick={() => setIsStudentTableColumnsModalOpen(false)}>
+              Close
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-6 select-none max-h-[70vh] overflow-y-auto pr-2">
+          <div className="flex flex-wrap gap-2 pb-3 border-b border-slate-100">
+            <button
+              onClick={() => {
+                const allCols = REPORT_COLUMNS.map((c) => c.id);
+                setStudentTableColumns(allCols);
+                localStorage.setItem(LOCAL_STORAGE_STUDENT_TABLE_COLS_KEY, JSON.stringify(allCols));
+              }}
+              className="text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
+            >
+              Select All
+            </button>
+            <button
+              onClick={() => {
+                setStudentTableColumns([]);
+                localStorage.setItem(LOCAL_STORAGE_STUDENT_TABLE_COLS_KEY, JSON.stringify([]));
+              }}
+              className="text-[11px] font-bold text-slate-600 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
+            >
+              Clear Selection
+            </button>
+            <button
+              onClick={() => {
+                setStudentTableColumns(DEFAULT_STUDENT_TABLE_COLUMNS);
+                localStorage.setItem(LOCAL_STORAGE_STUDENT_TABLE_COLS_KEY, JSON.stringify(DEFAULT_STUDENT_TABLE_COLUMNS));
+              }}
+              className="text-[11px] font-bold text-slate-600 hover:text-slate-800 border border-slate-200 hover:bg-slate-50 px-2.5 py-1.5 rounded-lg transition-all cursor-pointer"
+            >
+              Reset to Default
+            </button>
+          </div>
+
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Choose which student fields should be visible in the registry table. These selections affect the live table only and are saved locally for this device.
+          </p>
+
+          <div className="space-y-5">
+            {REPORT_COLUMN_CATEGORIES.map(category => {
+              const categoryCols = REPORT_COLUMNS.filter(col => col.category === category);
+              return (
+                <div key={category} className="space-y-2">
+                  <h4 className="text-xs font-bold text-slate-900 border-b border-slate-100 pb-1 tracking-wide uppercase">
+                    {category}
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {categoryCols.map(col => {
+                      const isSelected = studentTableColumns.includes(col.id);
+                      return (
+                        <label
+                          key={col.id}
+                          className={`flex items-center gap-2.5 p-2.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all ${
+                            isSelected
+                              ? 'bg-blue-50/50 border-blue-200 text-blue-900 shadow-2xs'
+                              : 'bg-white border-slate-100 text-slate-600 hover:bg-slate-50 hover:border-slate-200'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              const updated = isSelected
+                                ? studentTableColumns.filter((c) => c !== col.id)
+                                : [...studentTableColumns, col.id];
+                              setStudentTableColumns(updated);
+                              localStorage.setItem(LOCAL_STORAGE_STUDENT_TABLE_COLS_KEY, JSON.stringify(updated));
+                            }}
+                            className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                          />
+                          <span>{col.label}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </Modal>
+
       {/* 0. VIEW STUDENT PROFILE DETAILS MODAL */}
       <Modal
         isOpen={isViewStudentModalOpen}
@@ -4351,20 +4984,27 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
         {selectedViewStudent && (
           <div className="space-y-6">
             {/* Header: Avatar & Core Info */}
-            <div className="flex items-center gap-4 p-4 bg-slate-50 border border-slate-100 rounded-xl">
-              <img
-                src={`https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(selectedViewStudent.name)}`}
-                alt="Student Avatar"
-                className="h-16 w-16 rounded-xl bg-white border border-slate-200 shadow-xs flex-shrink-0"
-              />
-              <div>
-                <span className="text-[10px] bg-blue-100 border border-blue-200 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
-                  {selectedViewStudent.class || 'N/A'}
-                </span>
-                <h3 className="text-lg font-black text-slate-900 mt-1">{selectedViewStudent.name}</h3>
-                <p className="text-xs text-slate-500 font-medium">{selectedViewStudent.email}</p>
+              <div className="flex items-center gap-4 p-4 bg-slate-50 border border-slate-100 rounded-xl">
+                <img
+                  src={`https://api.dicebear.com/7.x/notionists/svg?seed=${encodeURIComponent(selectedViewStudent.name)}`}
+                  alt="Student Avatar"
+                  className="h-16 w-16 rounded-xl bg-white border border-slate-200 shadow-xs flex-shrink-0"
+                />
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[10px] bg-blue-100 border border-blue-200 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                      {selectedViewStudent.class || 'N/A'}
+                    </span>
+                    {selectedViewStudent.feeCategory && String(selectedViewStudent.feeCategory).toUpperCase() !== 'REGULAR' && (
+                      <Badge variant={String(selectedViewStudent.feeCategory).toUpperCase() === 'RTE' ? 'danger' : 'info'} size="xs">
+                        {formatFeeCategoryLabel(selectedViewStudent.feeCategory)}
+                      </Badge>
+                    )}
+                  </div>
+                  <h3 className="text-lg font-black text-slate-900 mt-1">{selectedViewStudent.name}</h3>
+                  <p className="text-xs text-slate-500 font-medium">{selectedViewStudent.email}</p>
+                </div>
               </div>
-            </div>
 
             {/* Grid Layout of parameters */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4746,6 +5386,176 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
             </div>
           </div>
 
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
+            <h5 className="text-xs font-bold text-slate-500 tracking-wider uppercase border-b border-slate-200/60 pb-1.5">Fee Controls & Manual Concessions</h5>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="w-full flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-700 tracking-wide select-none">
+                  ADMISSION TYPE
+                </label>
+                <select
+                  className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer disabled:bg-slate-100 disabled:text-slate-400"
+                  value={studentForm.admissionType || 'new'}
+                  onChange={(e) => setStudentForm({ ...studentForm, admissionType: e.target.value as 'new' | 'old' })}
+                  disabled={editingStudentId ? !isAdminUser : false}
+                >
+                  <option value="new">New</option>
+                  <option value="old">Old</option>
+                </select>
+                {editingStudentId && !isAdminUser && (
+                  <p className="text-[10px] text-slate-400 font-semibold">Only admins can change admission type on existing students.</p>
+                )}
+              </div>
+
+              <div className="w-full flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-slate-700 tracking-wide select-none">
+                  FEE CATEGORY
+                </label>
+                <select
+                  className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 hover:border-slate-300 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 rounded-lg transition-all duration-200 outline-none cursor-pointer"
+                  value={studentForm.feeCategory || 'REGULAR'}
+                  onChange={(e) => setStudentForm({ ...studentForm, feeCategory: e.target.value as any })}
+                >
+                  <option value="REGULAR">Regular</option>
+                  <option value="RTE">RTE</option>
+                  <option value="STAFF_CHILD">Staff Child</option>
+                  <option value="SCHOLARSHIP">Scholarship</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-black uppercase tracking-[0.28em] text-slate-400">Concessions</p>
+                </div>
+                <Badge variant="slate" size="sm">{Array.isArray(studentForm.concessions) ? studentForm.concessions.length : 0} total</Badge>
+              </div>
+
+              <div className="space-y-2">
+                {(Array.isArray(studentForm.concessions) ? studentForm.concessions : []).length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-500">
+                    No concessions configured for this student.
+                  </div>
+                ) : (
+                  (Array.isArray(studentForm.concessions) ? studentForm.concessions : []).map((concession: any, index: number) => {
+                    return (
+                      <div key={`${concession.type || 'concession'}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-bold text-slate-900">
+                                {formatConcessionLabel(concession)}
+                              </p>
+                              <Badge variant="slate" size="xs">{String(concession.discountType || '').replace(/_/g, ' ')}</Badge>
+                            </div>
+                            <p className="text-[10px] font-semibold text-slate-500 mt-1 break-words">
+                              Applies to: {(Array.isArray(concession.appliesTo) ? concession.appliesTo : []).join(', ') || 'all'}
+                            </p>
+                            <p className="text-[10px] font-semibold text-slate-500 break-words">
+                              {concession.academicYear ? `AY: ${concession.academicYear}` : 'Academic year not set'}
+                            </p>
+                            <p className="text-[10px] font-semibold text-slate-500 break-words">
+                              Added: {concession.createdAt ? formatDate(concession.createdAt) : 'N/A'}
+                            </p>
+                            {concession.remarks && (
+                              <p className="text-[10px] font-semibold text-slate-500 break-words">
+                                Remarks: {concession.remarks}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-sm font-black text-rose-600">-{Number(concession.value || concession.amountDeducted || 0).toLocaleString()}</span>
+                            {isAdminUser && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveConcession(index)}
+                                className="text-[10px] font-black uppercase tracking-wide text-rose-600 hover:text-rose-700"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {isAdminUser && (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 space-y-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.28em] text-slate-400">Add manual concession</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <select
+                      className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 rounded-lg outline-none"
+                      value={manualConcessionDraft.type}
+                      onChange={(e) => setManualConcessionDraft({ ...manualConcessionDraft, type: e.target.value as any })}
+                    >
+                      <option value="SIBLING">Sibling Discount</option>
+                      <option value="STAFF_WARD">Staff Child</option>
+                      <option value="SCHOLARSHIP">Scholarship</option>
+                      <option value="OTHER">Other</option>
+                    </select>
+                    <select
+                      className="w-full px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 rounded-lg outline-none"
+                      value={manualConcessionDraft.discountType}
+                      onChange={(e) => setManualConcessionDraft({ ...manualConcessionDraft, discountType: e.target.value as any })}
+                    >
+                      <option value="percentage">Percentage</option>
+                      <option value="flat">Flat</option>
+                      <option value="full_waiver">Full Waiver</option>
+                    </select>
+                    <Input
+                      label="VALUE"
+                      type="number"
+                      value={manualConcessionDraft.value}
+                      onChange={(e) => setManualConcessionDraft({ ...manualConcessionDraft, value: e.target.value })}
+                    />
+                    <Input
+                      label="ACADEMIC YEAR"
+                      value={manualConcessionDraft.academicYear}
+                      onChange={(e) => setManualConcessionDraft({ ...manualConcessionDraft, academicYear: e.target.value })}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className="space-y-1.5">
+                      <span className="text-xs font-semibold text-slate-700 tracking-wide select-none">APPLIES TO</span>
+                      <select
+                        multiple
+                        value={manualConcessionDraft.appliesTo}
+                        onChange={(e) => setManualConcessionDraft({
+                          ...manualConcessionDraft,
+                          appliesTo: (Array.from(e.currentTarget.selectedOptions) as HTMLOptionElement[]).map((option) => option.value)
+                        })}
+                        className="w-full min-h-28 px-3.5 py-2 text-sm text-slate-900 bg-white border border-slate-200 rounded-lg outline-none"
+                      >
+                        <option value="all">All</option>
+                        <option value="admissionFee">Admission Fee</option>
+                        <option value="tuitionFee">Tuition Fee</option>
+                        <option value="computerFee">Computer Fee</option>
+                        <option value="examFee">Exam Fee</option>
+                        <option value="culturalActivityFee">Cultural Activity Fee</option>
+                      </select>
+                    </label>
+                    <Input
+                      label="REMARKS"
+                      value={manualConcessionDraft.remarks}
+                      onChange={(e) => setManualConcessionDraft({ ...manualConcessionDraft, remarks: e.target.value })}
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    <Button type="button" size="sm" onClick={handleManualConcessionAdd}>
+                      Add Concession
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Section 3: Parental Details & Contact */}
           <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-4">
             <h5 className="text-xs font-bold text-slate-500 tracking-wider uppercase border-b border-slate-200/60 pb-1.5">Parental & Contact Details</h5>
@@ -5096,11 +5906,15 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
 
               return filteredForModal.map(record => {
                 const isPaid = (record.dueAmount ?? 0) <= 0;
+                const isRteWaived = isRteWaivedFee(record.feeCategory, null, record.totalFee);
                 return (
                   <button
                     key={record.id}
                     type="button"
                     onClick={() => {
+                      if (isRteWaived) {
+                        return;
+                      }
                       setSelectedFeeStudent(record);
                       setCustomPayAmount((record.dueAmount ?? 0).toString());
                       setReceiptDetail(null);
@@ -5108,7 +5922,8 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                       setFeeModalSearchQuery('');
                       setIsCustomPayModalOpen(true);
                     }}
-                    className="w-full text-left flex items-center justify-between p-3 border border-slate-200 hover:border-blue-300 bg-white hover:bg-blue-50/10 rounded-xl transition-all cursor-pointer group active:scale-99"
+                    disabled={isRteWaived}
+                    className="w-full text-left flex items-center justify-between p-3 border border-slate-200 hover:border-blue-300 bg-white hover:bg-blue-50/10 rounded-xl transition-all cursor-pointer group active:scale-99 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <div className="flex items-center gap-3">
                       <div className="h-8 w-8 rounded-full bg-slate-100 group-hover:bg-blue-50 text-slate-600 group-hover:text-blue-600 flex items-center justify-center font-bold text-xs transition-colors">
@@ -5118,6 +5933,16 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                         <p className="text-xs font-bold text-slate-800 group-hover:text-blue-700 transition-colors">
                           {record.name}
                         </p>
+                        <div className="flex flex-wrap items-center gap-1 mt-1">
+                          <Badge variant={getAdmissionTypeBadgeVariant(record.admissionType)} size="xs">
+                            {formatAdmissionTypeLabel(record.admissionType)}
+                          </Badge>
+                          {record.feeCategory && String(record.feeCategory).toUpperCase() !== 'REGULAR' && (
+                            <Badge variant={String(record.feeCategory).toUpperCase() === 'RTE' ? 'danger' : 'info'} size="xs">
+                              {formatFeeCategoryLabel(record.feeCategory)}
+                            </Badge>
+                          )}
+                        </div>
                         <p className="text-[10px] text-slate-400 font-medium mt-0.5">
                           Adm: <span className="font-bold text-slate-600">{record.admissionNo}</span> · Class: <span className="font-bold text-slate-600">{record.className}</span>
                         </p>
@@ -5125,11 +5950,11 @@ Remaining Due  : ₹${(item.dueAmount || 0).toLocaleString()}
                     </div>
                     
                     <div className="text-right">
-                      <p className={`text-xs font-black ${isPaid ? 'text-emerald-600' : 'text-slate-400'}`}>
-                        {isPaid ? 'Settled' : `₹${(record.dueAmount ?? 0).toLocaleString()}`}
+                      <p className={`text-xs font-black ${isRteWaived ? 'text-rose-600' : isPaid ? 'text-emerald-600' : 'text-slate-400'}`}>
+                        {isRteWaived ? 'No fee due - RTE' : isPaid ? 'Settled' : `₹${(record.dueAmount ?? 0).toLocaleString()}`}
                       </p>
                       <p className="text-[9px] text-slate-400 font-bold mt-0.5">
-                        {isPaid ? 'No Outstanding' : 'Bal Due'}
+                        {isRteWaived ? 'Waived' : isPaid ? 'No Outstanding' : 'Bal Due'}
                       </p>
                     </div>
                   </button>

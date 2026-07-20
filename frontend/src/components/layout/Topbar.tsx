@@ -38,9 +38,9 @@ export const Topbar: React.FC<TopbarProps> = ({
 
   // Hardcoded notifications corresponding to latest server notice updates
   const notifications = [
-    { id: 1, text: `New High Priority Notice: "Pansy Fest ${currentYear}"`, type: 'notice', read: false, time: '10 mins ago' },
-    { id: 2, text: 'Dr. Clara Rivers join date scheduled for tomorrow', type: 'system', read: false, time: '2 hours ago' },
-    { id: 3, text: 'Quarterly Audit: Financial ledger updated', type: 'fee', read: true, time: '1 day ago' },
+    { id: 1, text: `Harsh Bhardwaj - 9713747276`, type: 'Contact', read: false, time: 'Available' },
+    { id: 2, text: `Tanmay Pardhi - 6266162183`, type: 'Contact', read: false, time: 'Available' },
+
   ];
 
   useEffect(() => {
@@ -203,7 +203,7 @@ export const Topbar: React.FC<TopbarProps> = ({
               <div className="absolute right-0 mt-2 w-80 bg-white border border-slate-200 rounded-2xl shadow-xl z-40 py-2 origin-top-right transition-all">
                 <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between">
                   <span className="text-xs font-bold text-slate-800">Notifications</span>
-                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">3 Alert Units</span>
+                  <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Contact if needed</span>
                 </div>
                 <div className="divide-y divide-slate-50 max-h-64 overflow-y-auto">
                   {notifications.map((notif) => (

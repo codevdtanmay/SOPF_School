@@ -9,6 +9,11 @@ const mapStudentResponse = (s: any): Student => {
   const resolvedName = isPopulated ? s.userId.name : (s.name || '');
   const resolvedEmail = isPopulated ? s.userId.email : (s.email || '');
   const userIdVal = isPopulated ? s.userId._id : (s.userId || '');
+  const normalizeDateValue = (value: any) => {
+    if (!value) return '';
+    const asString = String(value);
+    return /^\d{4}-\d{2}-\d{2}$/.test(asString) ? asString : asString.slice(0, 10);
+  };
 
   return {
     id: s._id || s.id,
@@ -20,6 +25,19 @@ const mapStudentResponse = (s: any): Student => {
     section: s.section || '',
     rollNo: s.rollNo != null ? Number(s.rollNo) : undefined,
     academicYear: s.academicYear || s.currentEnrollment?.academicYear?.label || s.currentEnrollment?.academicYear || '',
+    admissionType: s.admissionType || 'new',
+    feeCategory: s.feeCategory || 'REGULAR',
+    concessions: Array.isArray(s.concessions) ? s.concessions.map((c: any) => ({
+      type: c.type,
+      discountType: c.discountType,
+      value: c.value,
+      appliesTo: Array.isArray(c.appliesTo) ? c.appliesTo : [],
+      academicYear: c.academicYear || '',
+      remarks: c.remarks || '',
+      createdBy: c.createdBy || '',
+      createdAt: c.createdAt || '',
+      autoManaged: Boolean(c.autoManaged)
+    })) : [],
     lifecycleStatus: s.lifecycleStatus || 'Active',
     fatherName: s.fatherName || '',
     motherName: s.motherName || '',
@@ -55,8 +73,8 @@ const mapStudentResponse = (s: any): Student => {
         }
       : null,
     // New Demographics and Govt ID fields
-    dateOfBirth: s.dateOfBirth || '',
-    joiningDate: s.joiningDate || '',
+    dateOfBirth: normalizeDateValue(s.dateOfBirth),
+    joiningDate: normalizeDateValue(s.joiningDate),
     category: s.category || 'General',
     aadharNo: s.aadharNo || '',
     samagraId: s.samagraId || '',
@@ -102,6 +120,8 @@ export const studentApi = {
     class?: string;
     section?: string;
     academicYear?: string;
+    admissionType?: string;
+    feeCategory?: string;
     lifecycleStatus?: string;
     sortBy?: string;
     order?: string;
@@ -116,8 +136,10 @@ export const studentApi = {
         if (params.village) queryParams.append('village', params.village);
         if (params.class && params.class !== 'All') queryParams.append('class', params.class);
         if (params.section && params.section !== 'All') queryParams.append('section', params.section);
-        if (params.academicYear && params.academicYear !== 'All') queryParams.append('academicYear', params.academicYear);
-        if (params.lifecycleStatus && params.lifecycleStatus !== 'All') queryParams.append('lifecycleStatus', params.lifecycleStatus);
+      if (params.academicYear && params.academicYear !== 'All') queryParams.append('academicYear', params.academicYear);
+      if (params.admissionType && params.admissionType !== 'All') queryParams.append('admissionType', params.admissionType);
+      if (params.feeCategory && params.feeCategory !== 'All') queryParams.append('feeCategory', params.feeCategory);
+      if (params.lifecycleStatus && params.lifecycleStatus !== 'All') queryParams.append('lifecycleStatus', params.lifecycleStatus);
         if (params.sortBy) queryParams.append('sortBy', params.sortBy);
         if (params.order) queryParams.append('order', params.order);
         if (params.search) queryParams.append('search', params.search);
@@ -288,11 +310,16 @@ export const studentApi = {
     return Array.isArray(data?.history) ? data.history : [];
   },
 
+  getFeePreview: async (studentId: string, academicYear: string) => {
+    const response = await axiosInstance.get(`/student/${studentId}/fee-preview`, {
+      params: { academicYear }
+    });
+    return response.data;
+  },
+
   addStudent: async (studentData: Omit<Student, 'id' | 'rollNumber' | 'admissionDate'>): Promise<Student> => {
     const response = await axiosInstance.post('/student/add', studentData);
     const data = response.data;
-    
-    // Support { success: true, student: {...} } envelope or direct object
     const rawStudent = data && data.student ? data.student : data;
     return mapStudentResponse(rawStudent);
   },

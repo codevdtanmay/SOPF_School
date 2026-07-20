@@ -21,11 +21,11 @@ export const noticeApi = {
       return [
         {
           id: 'fallback-nt-1',
-          title: 'Welcome to PAN-S School Portal',
-          content: 'You can customize announcements by connecting notices database table features.',
+          title: 'Creater & Designer - The Developer Boys',
+          content: 'For THE SCHOOL OF PANSY FLOWERS',
           date: new Date().toISOString().split('T')[0],
           priority: 'High',
-          publishedBy: 'System Desk'
+          publishedBy: 'Developer'
         }
       ];
     }

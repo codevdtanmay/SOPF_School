@@ -20,6 +20,19 @@ export interface Student {
   section?: string;
   rollNo?: number;
   academicYear?: string;
+  admissionType?: 'new' | 'old';
+  feeCategory?: 'REGULAR' | 'RTE' | 'STAFF_CHILD' | 'SCHOLARSHIP' | 'OTHER';
+  concessions?: {
+    type: 'RTE' | 'SIBLING' | 'STAFF_WARD' | 'SCHOLARSHIP' | 'OTHER';
+    discountType: 'percentage' | 'flat' | 'full_waiver';
+    value?: number;
+    appliesTo?: string[];
+    academicYear?: string;
+    remarks?: string;
+    createdBy?: string;
+    createdAt?: string;
+    autoManaged?: boolean;
+  }[];
   lifecycleStatus?: 'Active' | 'Left' | 'Alumni' | 'Transferred';
   fatherName?: string;
   motherName?: string;
@@ -122,10 +135,24 @@ export interface FinancialHistoryEntry {
   academicYear: string;
   className: string;
   section?: string;
+  admissionType?: 'new' | 'old';
+  feeCategory?: 'REGULAR' | 'RTE' | 'STAFF_CHILD' | 'SCHOLARSHIP' | 'OTHER' | string;
   totalFee: number;
   paidAmount: number;
   dueAmount: number;
   status: 'Paid' | 'Partial' | 'Pending';
+  feeSnapshot?: {
+    academicYear?: string;
+    admissionType?: 'new' | 'old';
+    feeCategory?: 'REGULAR' | 'RTE' | 'STAFF_CHILD' | 'SCHOLARSHIP' | 'OTHER' | string;
+    totalBeforeDiscount?: number;
+    totalDiscount?: number;
+    finalAmount?: number;
+    concessions?: FinancialReceiptEntry[] | { type?: string; discountType?: string; value?: number; amountDeducted?: number }[];
+    concessionsApplied?: { type?: string; discountType?: string; value?: number; amountDeducted?: number }[];
+    feeStructureSnapshot?: Record<string, unknown>;
+    componentBreakdown?: Record<string, { original?: number; final?: number }>;
+  };
   installments: FinancialInstallmentEntry[];
   payments: FinancialReceiptEntry[];
   receipts: FinancialReceiptEntry[];

@@ -35,6 +35,60 @@ const studentSchema = new mongoose.Schema(
       default: ""
     },
 
+    admissionType: {
+      type: String,
+      enum: ["new", "old"],
+      default: "new"
+    },
+
+    feeCategory: {
+      type: String,
+      enum: ["REGULAR", "RTE", "STAFF_CHILD", "SCHOLARSHIP", "OTHER"],
+      default: "REGULAR"
+    },
+
+    concessions: [{
+      type: {
+        type: String,
+        enum: ["RTE", "SIBLING", "STAFF_WARD", "SCHOLARSHIP", "OTHER"],
+        required: true
+      },
+      discountType: {
+        type: String,
+        enum: ["percentage", "flat", "full_waiver"],
+        required: true
+      },
+      value: {
+        type: Number,
+        default: 0
+      },
+      appliesTo: [{
+        type: String,
+        default: "all"
+      }],
+      academicYear: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "AcademicYear"
+      },
+      remarks: {
+        type: String,
+        default: ""
+      },
+      createdBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null
+      },
+      createdAt: {
+        type: Date,
+        default: Date.now
+      },
+      autoManaged: {
+        type: Boolean,
+        default: false
+      }
+    }],
+
     lifecycleStatus: {
       type: String,
       enum: ["Active", "Left", "Alumni", "Transferred"],

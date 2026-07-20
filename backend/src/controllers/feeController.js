@@ -7,12 +7,12 @@ import mongoose from "mongoose";
 import computeInstallmentDetails from "../utils/installmentCalculator.js";
 import { sendFeeReceiptMessage, sendFeeReceiptPdfMessage } from "../services/whatsapp.service.js"
 import {
-  buildFeePaymentSnapshot,
   currentMonthLabel,
   normalizeAcademicYear,
   normalizeClassLabel,
   normalizeSectionLabel
 } from "../utils/feeLifecycle.js";
+import { calculateStudentFee } from "../services/calculateStudentFee.js";
 import { resolveStudentPlacement } from "../utils/studentPlacement.js";
 import { resolveAcademicYearQuery } from "../utils/mongoQueryHelpers.js";
 
@@ -118,6 +118,16 @@ const findFeeStructureByCriteria = async ({
           !normalizeSectionLabel(feeStructure.section))
     ) || null
   );
+};
+
+const resolveAcademicYearDoc = async (value) => {
+  const normalized = normalizeAcademicYear(value);
+
+  if (!normalized) {
+    return academicYearModel.findOne({ isCurrent: true });
+  }
+
+  return academicYearModel.findOne(resolveAcademicYearQuery(normalized));
 };
 
 const findMatchingFeeStructure = async (student) =>
@@ -253,6 +263,7 @@ const collectFee = async (req, res) => {
     }
 
     const selectedAcademicYear = normalizeAcademicYear(academicYear || student.academicYear);
+    const academicYearDoc = await resolveAcademicYearDoc(selectedAcademicYear);
     const placement = await resolveStudentPlacement(student, academicYear || student.academicYear);
     const selectedClassName = String(className || placement.className || "").trim();
     const selectedSection = String(section || placement.section || "").trim();
@@ -278,30 +289,42 @@ const collectFee = async (req, res) => {
 
     const { totalPaid } = await getStudentAnnualPayments(student._id, normalizedAcademicYear);
     const updatedPaid = totalPaid + paidNow;
-    const dueAmount = Math.max(0, Number(feeStructureForSelectedYear.totalFee || 0) - updatedPaid);
+    const feeCalculation = await calculateStudentFee(
+      {
+        ...student.toObject(),
+        class: selectedClassName,
+        section: selectedSection,
+        academicYear: normalizedAcademicYear,
+        admissionType: student.admissionType || "new"
+      },
+      feeStructureForSelectedYear,
+      academicYearDoc || normalizedAcademicYear
+    );
 
-    const paymentStudent = {
-      ...student.toObject(),
-      class: selectedClassName,
-      section: selectedSection,
-      academicYear: normalizedAcademicYear,
-      currentEnrollment: student.currentEnrollment || null
-    };
-
+    const dueAmount = Math.max(0, Number(feeCalculation.finalAmount || 0) - updatedPaid);
     const receiptNo = await buildReceiptNo(paymentDate);
 
-    const snapshot = buildFeePaymentSnapshot({
-      student: paymentStudent,
-      feeStructure: feeStructureForSelectedYear,
-      amountPaid: paidNow,
-      paymentMethod: paymentMethod || "Cash",
-      receiptNo,
-      paymentDate,
+    const snapshot = {
+      studentId: student._id,
+      studentName: student.userId?.name || "",
+      admissionNo: student.admissionNo || "",
+      className: selectedClassName,
+      section: selectedSection,
+      academicYear: normalizedAcademicYear,
+      feeStructureId: feeStructureForSelectedYear._id || null,
+      feeSnapshot: {
+        ...feeCalculation,
+        academicYear: feeCalculation.academicYear || academicYearDoc?._id || academicYearDoc || normalizedAcademicYear
+      },
       month: paymentMonth,
+      amount: paidNow,
       paidAmount: paidNow,
       dueAmount,
-      status: dueAmount <= 0 ? "Paid" : updatedPaid > 0 ? "Partial" : "Pending"
-    });
+      status: dueAmount <= 0 ? "Paid" : updatedPaid > 0 ? "Partial" : "Pending",
+      paymentMethod: paymentMethod || "Cash",
+      receiptNo,
+      paymentDate
+    };
 
     const payment = await createPaymentWithMonthlyReceipt(snapshot, paymentDate).catch((error) => {
       if (error?.code === 11000) {
@@ -319,20 +342,21 @@ const collectFee = async (req, res) => {
 try {
   if (student.phone) {
     await sendFeeReceiptMessage({
-  phone: student.phone.startsWith("91")
-    ? student.phone
-    : `91${student.phone}`,
-  studentName: payment.studentName,
-  admissionNo: payment.admissionNo,
-  className: payment.className,
-  section: payment.section,
-  academicYear: payment.academicYear,
-  installment: payment.month,
-  paidAmount: payment.paidAmount,
-  dueAmount: payment.dueAmount,
-  paymentMethod: payment.paymentMethod,
-  receiptNo: payment.receiptNo,
-});
+      phone: student.phone.startsWith("91")
+        ? student.phone
+        : `91${student.phone}`,
+      studentName: payment.studentName,
+      admissionNo: payment.admissionNo,
+      className: payment.className,
+      section: payment.section,
+      academicYear: payment.academicYear,
+      installment: payment.month,
+      paidAmount: payment.paidAmount,
+      dueAmount: payment.dueAmount,
+      paymentMethod: payment.paymentMethod,
+      receiptNo: payment.receiptNo,
+      feeSnapshot: payment.feeSnapshot
+    });
   }
 } catch (err) {
   console.error("WhatsApp Error:", err);
@@ -355,7 +379,8 @@ try {
         paymentMethod: payment.paymentMethod,
         paymentDate: payment.paymentDate,
         month: payment.month,
-        status: payment.status
+        status: payment.status,
+        feeSnapshot: payment.feeSnapshot
       },
       payment: payment.toObject()
     });
@@ -430,7 +455,13 @@ const sendFeeReceiptWhatsapp = async (req, res) => {
       payment.studentId?._id || payment.studentId,
       payment.academicYear
     );
-    const totalFee = Number(feeStructureForPaymentYear?.totalFee || student.totalFee || 0);
+    const feeSnapshot = payment.feeSnapshot || null;
+    const totalFee = Number(
+      feeSnapshot?.finalAmount ??
+      feeStructureForPaymentYear?.totalFee ??
+      student.totalFee ??
+      0
+    );
     const dueAmount = Math.max(0, totalFee - cumulativePaid);
 
     const result = await sendFeeReceiptPdfMessage({
@@ -441,7 +472,8 @@ const sendFeeReceiptWhatsapp = async (req, res) => {
         paidAmountTotal: cumulativePaid,
         dueAmountRemaining: dueAmount,
         category: student.category || "",
-        village: student.address?.village || ""
+        village: student.address?.village || "",
+        feeSnapshot
       }
     });
 
@@ -500,19 +532,37 @@ const getStudentFeeDetails = async (req, res) => {
       student._id,
       requestedAcademicYear
     );
-
-    const totalFee = Number(structure.totalFee || 0);
+    const academicYearDoc = await resolveAcademicYearDoc(requestedAcademicYear);
+    const feeCalculation = await calculateStudentFee(
+      {
+        ...student.toObject(),
+        class: placement.className || student.class || "",
+        section: placement.section || student.section || "",
+        admissionType: student.admissionType || "new"
+      },
+      structure,
+      academicYearDoc || requestedAcademicYear
+    );
+    const totalFee = Number(feeCalculation.finalAmount || 0);
     const dueAmount = Math.max(0, totalFee - totalPaid);
 
     const installments = computeInstallmentDetails(totalPaid, structure);
 
     return res.status(200).json({
       success: true,
+      studentId: student._id,
+      studentName: student.userId?.name || "",
+      admissionNo: student.admissionNo || "",
+      className: feeCalculation.className || placement.className || student.class || "",
+      section: feeCalculation.section || placement.section || student.section || "",
+      academicYear: requestedAcademicYear,
+      admissionType: student.admissionType || "new",
+      feeCategory: feeCalculation.feeCategory || String(student.feeCategory || "REGULAR").trim().toUpperCase(),
       totalFee,
       paidAmount: totalPaid,
       dueAmount,
       status: dueAmount <= 0 ? "Paid" : totalPaid > 0 ? "Partial" : "Pending",
-      academicYear: requestedAcademicYear,
+      feeSnapshot: feeCalculation,
       payments,
       installments
     });
@@ -583,6 +633,7 @@ const getFeeDashboard = async (_req, res) => {
     const feeSummaries = await Promise.all(
       students.map(async (student) => {
         const placement = await resolveStudentPlacement(student, student.academicYear);
+        const studentAcademicYearDoc = await resolveAcademicYearDoc(student.academicYear);
         const structure = await findMatchingFeeStructure({
           ...student.toObject(),
           class: placement.className,
@@ -590,7 +641,22 @@ const getFeeDashboard = async (_req, res) => {
           academicYear: student.academicYear
         });
         const { totalPaid } = await getStudentAnnualPayments(student._id, student.academicYear);
-        const totalFee = Number(structure?.totalFee || student.totalFee || 0);
+        const feeCalculation = structure
+          ? await calculateStudentFee(
+      {
+        ...student.toObject(),
+        admissionType: student.admissionType || "new"
+      },
+      structure,
+      studentAcademicYearDoc || student.academicYear
+            )
+          : null;
+        const totalFee = Number(
+          feeCalculation?.finalAmount ??
+          structure?.totalFee ??
+          student.totalFee ??
+          0
+        );
         const dueAmount = Math.max(0, totalFee - totalPaid);
 
         return {
@@ -629,6 +695,8 @@ const getAllFees = async (req, res) => {
       class: studentClass,
       section,
       academicYear,
+      admissionType,
+      feeCategory,
       search,
       page = 1,
       limit = 20
@@ -695,12 +763,23 @@ const getAllFees = async (req, res) => {
       );
     }
 
+    if (admissionType && admissionType !== "All") {
+      rows = rows.filter(({ student }) => String(student.admissionType || "new") === admissionType);
+    }
+
+    if (feeCategory && feeCategory !== "All") {
+      const normalizedFeeCategory = String(feeCategory || "REGULAR").trim().toUpperCase();
+      rows = rows.filter(({ student }) => String(student.feeCategory || "REGULAR").trim().toUpperCase() === normalizedFeeCategory);
+    }
+
     const totalStudents = rows.length;
     const skip = (Number(page) - 1) * Number(limit);
     rows = rows.slice(skip, skip + Number(limit));
 
     const formattedData = await Promise.all(
       rows.map(async ({ enrollment, student, className, sectionName, academicYearLabel, rollNo }) => {
+        const academicYearDocForRow = academicYearDoc || await resolveAcademicYearDoc(academicYearLabel);
+        const admissionTypeForRow = student.admissionType || "new";
         const structure = await findMatchingFeeStructure({
           ...student.toObject(),
           class: className,
@@ -708,7 +787,22 @@ const getAllFees = async (req, res) => {
           academicYear: academicYearLabel
         });
         const { totalPaid, payments } = await getStudentAnnualPayments(student._id, academicYearLabel);
-        const totalFee = Number(structure?.totalFee || student.totalFee || 0);
+        const feeCalculation = structure
+          ? await calculateStudentFee(
+            {
+              ...student.toObject(),
+                admissionType: admissionTypeForRow
+              },
+              structure,
+              academicYearDocForRow || academicYearLabel
+            )
+          : null;
+        const totalFee = Number(
+          feeCalculation?.finalAmount ??
+          structure?.totalFee ??
+          student.totalFee ??
+          0
+        );
         const dueAmount = Math.max(0, totalFee - totalPaid);
         const currentStatus = dueAmount <= 0 ? "Paid" : totalPaid > 0 ? "Partial" : "Pending";
 
@@ -735,6 +829,9 @@ const getAllFees = async (req, res) => {
           section: sectionName,
           className,
           academicYear: academicYearLabel,
+          admissionType: admissionTypeForRow,
+          feeCategory: String(student.feeCategory || "REGULAR").trim().toUpperCase(),
+          feeSnapshot: feeCalculation,
           rollNo,
           totalFee,
           paidAmount: totalPaid,
@@ -748,14 +845,17 @@ const getAllFees = async (req, res) => {
     const filteredData = status && status !== "All"
       ? formattedData.filter((row) => row.status === status)
       : formattedData;
+    const admissionTypeFilteredData = admissionType && admissionType !== "All"
+      ? filteredData.filter((row) => row.admissionType === admissionType)
+      : filteredData;
 
     return res.status(200).json({
       success: true,
-      students: filteredData,
+      students: admissionTypeFilteredData,
       pagination: {
         currentPage: Number(page),
-        totalPages: Math.ceil(totalStudents / Number(limit)),
-        totalStudents,
+        totalPages: Math.ceil(admissionTypeFilteredData.length / Number(limit)),
+        totalStudents: admissionTypeFilteredData.length,
         limit: Number(limit)
       }
     });

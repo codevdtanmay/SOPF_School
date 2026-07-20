@@ -54,6 +54,12 @@ const feePaymentSchema = new mongoose.Schema(
       immutable: true
     },
 
+    feeSnapshot: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+      immutable: true
+    },
+
     month: {
       type: String,
       required: true,
@@ -130,4 +136,3 @@ feePaymentSchema.index({ academicYear: 1, month: 1, paymentDate: -1 });
 feePaymentSchema.index({ studentId: 1, academicYear: 1, feeStructureId: 1 });
 
 export default mongoose.model("FeePayment", feePaymentSchema);
-
